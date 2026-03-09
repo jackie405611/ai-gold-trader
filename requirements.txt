@@ -1,0 +1,4 @@
+tradingview_ta
+pandas
+numpy
+requests
