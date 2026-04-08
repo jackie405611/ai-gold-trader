@@ -1,0 +1,5 @@
+.vercel
+.env*.local
+__pycache__/
+*.pyc
+chart.png
