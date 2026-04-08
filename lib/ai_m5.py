@@ -1,8 +1,14 @@
 # ============================================================
-#  ai_m5.py  —  M5 Trend Engine  (V3)
+#  lib/ai_m5.py  —  M5 Trend Engine (V3)
+#  Fixes:
+#   - ADX DM filter uses raw series before mutation
+#   - DX denominator guard against inf (replace instead of fillna)
 # ============================================================
 import pandas as pd
-from config import CONFIRM_BARS
+try:
+    from lib.config import CONFIRM_BARS
+except ImportError:
+    from config import CONFIRM_BARS
 
 
 def _ema(series, span):
@@ -15,11 +21,11 @@ def _adx(df, period=14):
     low   = df["low"]
     close = df["close"]
 
-    plus_dm  = high.diff().clip(lower=0)
-    minus_dm = (-low.diff()).clip(lower=0)
-    # ถ้า +DM < -DM ให้เป็น 0
-    plus_dm  = plus_dm.where(plus_dm > minus_dm, 0)
-    minus_dm = minus_dm.where(minus_dm > plus_dm, 0)
+    # fix: save raw values before mutual filter to avoid reading mutated series
+    raw_plus  = high.diff().clip(lower=0)
+    raw_minus = (-low.diff()).clip(lower=0)
+    plus_dm   = raw_plus.where(raw_plus > raw_minus, 0)
+    minus_dm  = raw_minus.where(raw_minus >= raw_plus, 0)  # >= handles equal → both 0
 
     tr = pd.concat([
         high - low,
@@ -27,12 +33,14 @@ def _adx(df, period=14):
         (low  - close.shift()).abs()
     ], axis=1).max(axis=1)
 
-    atr = tr.ewm(span=period, adjust=False).mean()
+    atr      = tr.ewm(span=period, adjust=False).mean().replace(0, 1e-10)
     plus_di  = 100 * plus_dm.ewm(span=period, adjust=False).mean() / atr
     minus_di = 100 * minus_dm.ewm(span=period, adjust=False).mean() / atr
 
-    dx  = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di)).fillna(0)
-    adx = dx.ewm(span=period, adjust=False).mean()
+    # fix: guard against inf by replacing zero denominator before division
+    denom = (plus_di + minus_di).replace(0, 1e-10)
+    dx    = (100 * (plus_di - minus_di).abs() / denom).fillna(0)
+    adx   = dx.ewm(span=period, adjust=False).mean()
 
     return adx, plus_di, minus_di
 
@@ -40,8 +48,8 @@ def _adx(df, period=14):
 def trend_signal(df):
     """
     ส่งคืน: "BUY" | "SELL" | "NONE"
-    เงื่อนไข BUY  : EMA20 > EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20
-    เงื่อนไข SELL : EMA20 < EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20
+    เงื่อนไข BUY  : EMA20 > EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20 + +DI > -DI
+    เงื่อนไข SELL : EMA20 < EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20 + -DI > +DI
     """
     close = df["close"]
     ema20 = _ema(close, 20)
@@ -49,8 +57,8 @@ def trend_signal(df):
 
     adx, plus_di, minus_di = _adx(df)
 
-    # ── ต้องยืนยัน N แท่งติดต่อกัน ──
     last_adx = adx.iloc[-1]
+    trend_strong = last_adx > 20
 
     bullish_bars = sum(
         ema20.iloc[-i] > ema50.iloc[-i]
@@ -60,8 +68,6 @@ def trend_signal(df):
         ema20.iloc[-i] < ema50.iloc[-i]
         for i in range(1, CONFIRM_BARS + 1)
     )
-
-    trend_strong = last_adx > 20  # ADX > 20 = trend มีแรง
 
     if bullish_bars == CONFIRM_BARS and trend_strong and plus_di.iloc[-1] > minus_di.iloc[-1]:
         return "BUY"
