@@ -73,8 +73,13 @@ def get_candles(symbol: str, timeframe: str, count: int = 500) -> pd.DataFrame |
     df = pd.DataFrame(data["values"])
     df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
     df.set_index("datetime", inplace=True)
-    for col in ["open", "high", "low", "close", "volume"]:
+    for col in ["open", "high", "low", "close"]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    # volume ไม่มีใน Forex/Gold — ใส่ 0 แทน
+    if "volume" not in df.columns:
+        df["volume"] = 0
+    else:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
     df = df[["open", "high", "low", "close", "volume"]]
 
     if timeframe == "M5":
