@@ -2,7 +2,7 @@
 #  lib/data_fetcher.py  —  Market data via Twelve Data API
 #  Replaces MT5 data_fetcher.py (no MetaTrader5 dependency)
 # ============================================================
-import os, json
+import os
 import requests
 import pandas as pd
 
@@ -29,7 +29,7 @@ def get_candles(symbol: str, timeframe: str, count: int = 500) -> pd.DataFrame |
     Returns DataFrame with columns: open, high, low, close, volume
     Index: pd.DatetimeIndex (UTC)
     """
-    # For M5 use Redis cache (5-min TTL) to stay within Twelve Data rate limits
+    # M5 — use Redis cache (5-min TTL) to stay within Twelve Data rate limits
     if timeframe == "M5":
         cached = store.get_cached_m5(symbol)
         if cached:
@@ -38,24 +38,26 @@ def get_candles(symbol: str, timeframe: str, count: int = 500) -> pd.DataFrame |
                 df.index = pd.to_datetime(df.index, utc=True)
                 return df
             except Exception:
-                pass  # cache corrupt, fetch fresh
+                pass  # cache corrupt → fetch fresh
 
-    td_sym   = SYMBOL_MAP[symbol]["twelve_symbol"]
+    sym_cfg  = SYMBOL_MAP[symbol]
+    td_sym   = sym_cfg["twelve_symbol"]
     interval = _tf_to_interval(timeframe)
 
+    params = {
+        "symbol":     td_sym,
+        "interval":   interval,
+        "outputsize": min(count, 5000),
+        "apikey":     _api_key(),
+        "timezone":   "UTC",
+        "order":      "ASC",
+    }
+    # ระบุ exchange สำหรับ symbol ที่มีหลาย exchange (เช่น BTC/USD)
+    if "twelve_exchange" in sym_cfg:
+        params["exchange"] = sym_cfg["twelve_exchange"]
+
     try:
-        resp = requests.get(
-            f"{TWELVE_BASE}/time_series",
-            params={
-                "symbol":     td_sym,
-                "interval":   interval,
-                "outputsize": min(count, 5000),
-                "apikey":     _api_key(),
-                "timezone":   "UTC",
-                "order":      "ASC",
-            },
-            timeout=15,
-        )
+        resp = requests.get(f"{TWELVE_BASE}/time_series", params=params, timeout=15)
         data = resp.json()
     except Exception as e:
         print(f"[Data] ❌ HTTP error for {symbol} {timeframe}: {e}")
@@ -83,22 +85,22 @@ def get_latest_price(symbol: str) -> tuple[float, float]:
     Returns (ask, bid) estimated from Twelve Data /price.
     Twelve Data does not expose spread — estimate from config max_spread.
     """
-    td_sym = SYMBOL_MAP[symbol]["twelve_symbol"]
+    sym_cfg = SYMBOL_MAP[symbol]
+    td_sym  = sym_cfg["twelve_symbol"]
+
+    params = {"symbol": td_sym, "apikey": _api_key()}
+    if "twelve_exchange" in sym_cfg:
+        params["exchange"] = sym_cfg["twelve_exchange"]
+
     try:
-        resp  = requests.get(
-            f"{TWELVE_BASE}/price",
-            params={"symbol": td_sym, "apikey": _api_key()},
-            timeout=8,
-        )
+        resp  = requests.get(f"{TWELVE_BASE}/price", params=params, timeout=8)
         price = float(resp.json().get("price", 0))
     except Exception as e:
         print(f"[Data] ❌ Price error for {symbol}: {e}")
         return 0.0, 0.0
 
-    cfg  = SYMBOL_MAP[symbol]
-    # Estimate half-spread as 30% of max_spread in price units
-    half = SYMBOLS[symbol]["max_spread"] * cfg["point_value"] * 0.3
-    digits = cfg["digits"]
+    half   = SYMBOLS[symbol]["max_spread"] * sym_cfg["point_value"] * 0.3
+    digits = sym_cfg["digits"]
     return round(price + half, digits), round(price - half, digits)
 
 

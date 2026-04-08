@@ -62,6 +62,7 @@ SYMBOL_MAP = {
     },
     "BTCUSDm": {
         "twelve_symbol": "BTC/USD",
+        "twelve_exchange": "Coinbase Pro",   # ระบุ exchange ป้องกัน ambiguous symbol
         "point_value":   0.01,
         "digits":        2,
     },
