@@ -3,7 +3,7 @@
 #  Receives POST from Telegram, dispatches commands.
 #  Replaces command_listener.py polling thread.
 # ============================================================
-import os, json, traceback
+import json, traceback
 from http.server import BaseHTTPRequestHandler
 
 from lib.config import SYMBOLS, TELEGRAM_CHAT_ID
@@ -145,12 +145,6 @@ def _handle(text: str, username: str):
 class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
-        # ── Verify Telegram webhook secret ───────────────────
-        secret = self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if secret != os.environ.get("TELEGRAM_WEBHOOK_SECRET", ""):
-            self._reply(403, "Forbidden")
-            return
-
         # ── Parse body ────────────────────────────────────────
         length = int(self.headers.get("Content-Length", 0))
         body   = self.rfile.read(length)
