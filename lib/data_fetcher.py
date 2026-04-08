@@ -13,7 +13,10 @@ TWELVE_BASE = "https://api.twelvedata.com"
 
 
 def _api_key() -> str:
-    return os.environ["TWELVE_DATA_API_KEY"]
+    key = os.environ.get("TWELVE_DATA_API_KEY", "")
+    if not key:
+        raise RuntimeError("TWELVE_DATA_API_KEY ยังไม่ได้ตั้งค่าใน Vercel env vars")
+    return key
 
 
 def _tf_to_interval(timeframe: str) -> str:

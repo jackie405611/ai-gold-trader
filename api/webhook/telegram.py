@@ -164,7 +164,11 @@ class handler(BaseHTTPRequestHandler):
                     user = msg.get("from", {}).get("username", "unknown")
                     if text.startswith("/"):
                         print(f"[Webhook] @{user}: {text}")
-                        _handle(text, user)
+                        try:
+                            _handle(text, user)
+                        except Exception as e:
+                            traceback.print_exc()
+                            _send(f"❌ <b>Error:</b> <code>{e}</code>")
         except Exception:
             traceback.print_exc()
 
