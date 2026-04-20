@@ -24,11 +24,34 @@ def _send(text):
     except Exception as e:
         print(f"[Cmd] send error: {e}")
 
+def _format_signal(sym, sig, info):
+    lines = [
+        f"📊 <b>{sym}</b>",
+        f"signal: <b>{sig}</b>",
+        f"strategy: <code>{info.get('strategy', '-')}</code>",
+        f"mode: <code>{info.get('requested_mode', '-')}</code>",
+        f"regime: <code>{info.get('regime', '-')}</code>",
+        f"bias: <code>{info.get('bias', '-')}</code>",
+        f"zone: <code>{info.get('zone_low', '-')} - {info.get('zone_high', '-')}</code>",
+        f"confirmed: <code>{info.get('confirmed', False)}</code>",
+        f"reason: <code>{info.get('reason', '-')}</code>",
+    ]
+
+    if sig in ("BUY", "SELL"):
+        lines.extend([
+            f"entry: <code>{info.get('entry')}</code>",
+            f"sl: <code>{info.get('sl')}</code>",
+            f"tp: <code>{info.get('tp')}</code>",
+            f"rr: <code>{info.get('rr')}</code>",
+        ])
+
+    return "\n".join(lines)
 
 def _handle(text, username):
     parts = text.strip().split()
-    cmd   = parts[0].lower()
-    arg   = parts[1].upper() if len(parts) > 1 else ""
+    cmd = parts[0].lower() if parts else ""
+    arg1 = parts[1].upper() if len(parts) > 1 else ""
+    arg2 = parts[2].lower() if len(parts) > 2 else ""
 
     # ── Bot-level commands ──────────────────────────────────
     if cmd == "/start":
@@ -80,6 +103,57 @@ def _handle(text, username):
         lines.append("/disable SYMBOL — เปิดแค่ alert")
         _send("\n".join(lines))
 
+    elif cmd == "/mode":
+        if not arg1:
+            _send("❓ ใช้แบบนี้ <code>/mode XAUUSDm</code>")
+            return
+
+        mode = ctrl.get_strategy_mode(arg1)
+        _send(f"🎯 <b>{arg1}</b> mode = <code>{mode}</code>")
+
+    elif cmd == "/setmode":
+        if not arg1 or not arg2:
+            _send(
+                "❓ ใช้แบบนี้ <code>/setmode XAUUSDm auto</code>\n"
+                "โหมดที่ใช้ได้: <code>auto</code>, <code>pullback</code>, <code>breakout</code>, <code>range</code>"
+            )
+            return
+
+        ok, msg = ctrl.set_strategy_mode(arg1, arg2, by=username)
+        if ok:
+            _send(f"✅ <b>{arg1}</b> strategy mode = <code>{msg}</code>")
+        else:
+            if msg == "invalid_mode":
+                _send(
+                    "❌ mode ไม่ถูกต้อง\n"
+                    "ใช้ได้: <code>auto</code>, <code>pullback</code>, <code>breakout</code>, <code>range</code>"
+                )
+            else:
+                _send(f"❌ ไม่พบ symbol <code>{arg1}</code>")
+
+    elif cmd == "/signal":
+        sym = arg1 if arg1 in SYMBOLS else list(SYMBOLS.keys())[0]
+        mode = arg2 if arg2 else ctrl.get_strategy_mode(sym)
+
+        df_h1 = get_candles(sym, mt5.TIMEFRAME_H1)
+        df_m15 = get_candles(sym, mt5.TIMEFRAME_M15)
+        df_m5 = get_candles(sym, mt5.TIMEFRAME_M5)
+        df_m1 = get_candles(sym, mt5.TIMEFRAME_M1)
+
+        if any(x is None for x in [df_h1, df_m15, df_m5, df_m1]):
+            _send(f"⚠️ โหลดข้อมูลกราฟ <code>{sym}</code> ไม่สำเร็จ")
+            return
+
+        sig, info = analyze_signal(
+            df_h1=df_h1,
+            df_m15=df_m15,
+            df_m5=df_m5,
+            df_m1=df_m1,
+            cfg=SYMBOLS[sym],
+            mode=mode,
+        )
+        _send(_format_signal(sym, sig, info))
+        
     # ── Info commands ───────────────────────────────────────
     elif cmd == "/status":
         from risk_manager import get_risk_summary
