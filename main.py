@@ -1,29 +1,25 @@
 # ============================================================
 #  main.py  —  AI Multi-Symbol Trader V3
-#  วน loop ทุก symbol ใน config.SYMBOLS ในรอบเดียวกัน
 # ============================================================
-import time, traceback
-import bot_controller as ctrl
-import MetaTrader5 as mt5
+import time
+import traceback
 from datetime import datetime, timezone, timedelta
 
-from mt5_connector    import connect, disconnect, get_account_info
-from data_fetcher     import get_candles, get_latest_atr
-from ai_m5            import trend_signal
-from ai_m1            import entry_signal
-from ai_strategy      import generate_signal, detect_regime
-from trade_manager    import open_trade, update_trailing_stop, close_all_positions
-from risk_manager     import check_drawdown, record_trade_result, reset_daily, get_risk_summary
-from filters          import spread_ok, session_ok, position_exists, market_open
-from telegram_bot     import (notify_bot_start, notify_trade_open,
-                               notify_risk_event, send_telegram, send_chart)
-from chart_generator  import generate_chart
-from config           import LOOP_SECONDS, SYMBOLS
+import MetaTrader5 as mt5
 import bot_controller as ctrl
+
+from mt5_connector import connect, disconnect, get_account_info
+from data_fetcher import get_candles, get_latest_atr
+from ai_strategy import generate_signal
+from trade_manager import open_trade, update_trailing_stop, close_all_positions
+from risk_manager import check_drawdown, record_trade_result, reset_daily, get_risk_summary
+from filters import spread_ok, session_ok, position_exists, market_open
+from telegram_bot import notify_bot_start, notify_trade_open, notify_risk_event, send_telegram, send_chart
+from chart_generator import generate_chart
+from config import LOOP_SECONDS, SYMBOLS
 from command_listener import start_listener
 
 
-# ── สถิติรอบวัน ──────────────────────────────────────────────
 _stats = {sym: {"trades": 0, "wins": 0, "losses": 0} for sym in SYMBOLS}
 _last_reset_day = None
 
@@ -40,22 +36,25 @@ def _daily_reset():
 
 
 def _check_closed(symbol, prev_count):
-    """ตรวจ position ที่เพิ่งปิด"""
     current = mt5.positions_get(symbol=symbol) or []
     if len(current) < prev_count:
         deals = mt5.history_deals_get(
             datetime.now(timezone.utc) - timedelta(hours=1),
-            datetime.now(timezone.utc)
+            datetime.now(timezone.utc),
         )
         if deals:
-            last   = deals[-1]
+            last = deals[-1]
             profit = last.profit
             record_trade_result(profit)
-            if profit > 0: _stats[symbol]["wins"]   += 1
-            else:          _stats[symbol]["losses"] += 1
+
+            if profit > 0:
+                _stats[symbol]["wins"] += 1
+            else:
+                _stats[symbol]["losses"] += 1
+
             send_telegram(
-                f"{'✅ WIN' if profit > 0 else '❌ LOSS'}  "
-                f"<b>{symbol}</b>  <code>{profit:+.2f} USD</code>"
+                f"{'✅ WIN' if profit > 0 else '❌ LOSS'} "
+                f"<b>{symbol}</b> <code>{profit:+.2f} USD</code>"
             )
     return len(current)
 
@@ -142,7 +141,6 @@ def _process_symbol(symbol, cfg, prev_counts):
             ),
         )
 
-# ── Main ─────────────────────────────────────────────────────
 
 def main():
     connect()
@@ -152,14 +150,13 @@ def main():
     start_listener()
     notify_bot_start("V3")
 
-    # ส่ง chart เริ่มต้นทุก symbol
     for sym, cfg in SYMBOLS.items():
         chart = generate_chart(symbol=sym)
         if chart:
             send_chart(chart, f"🤖 AI Trader V3 — {cfg['label']}")
 
     prev_counts = {sym: 0 for sym in SYMBOLS}
-    loop_count  = 0
+    loop_count = 0
 
     while ctrl.is_bot_running():
         try:
@@ -167,10 +164,9 @@ def main():
             _daily_reset()
             now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
             auto = "✅" if ctrl.is_trading_enabled() else "⏸"
-            print(f"\n{'='*55}")
+            print(f"\n{'=' * 55}")
             print(f"[Main] Loop #{loop_count} | {now} | Auto:{auto}")
 
-            # ── Global Risk Gate ──
             if not check_drawdown():
                 notify_risk_event("MAX DRAWDOWN — Auto trade disabled")
                 for sym in SYMBOLS:
@@ -182,25 +178,23 @@ def main():
                 time.sleep(900)
                 continue
 
-            # ── วน loop ทุก symbol ──
             for symbol, cfg in SYMBOLS.items():
                 try:
                     _process_symbol(symbol, cfg, prev_counts)
                 except Exception as e:
                     print(f"[Main:{symbol}] ⚠️ {e}")
 
-            # ── Summary ทุก 30 loop ──
             if loop_count % 30 == 0:
-                rs    = get_risk_summary()
+                rs = get_risk_summary()
                 lines = [
-                    f"📊 <b>Status Update</b>",
+                    "📊 <b>Status Update</b>",
                     f"Balance: <code>{rs.get('balance','?')}</code>  DD: <code>{rs.get('drawdown_pct','?')}%</code>",
                     "",
                 ]
                 for sym, cfg in SYMBOLS.items():
-                    s     = _stats[sym]
+                    s = _stats[sym]
                     state = "✅" if ctrl.should_trade(sym) else "⏸"
-                    lines.append(f"{state} <b>{cfg['label']}</b>  T:{s['trades']} W:{s['wins']} L:{s['losses']}")
+                    lines.append(f"{state} <b>{cfg['label']}</b> T:{s['trades']} W:{s['wins']} L:{s['losses']}")
                 send_telegram("\n".join(lines))
 
         except KeyboardInterrupt:
