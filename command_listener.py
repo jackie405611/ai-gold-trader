@@ -211,6 +211,16 @@ def _handle(text, username):
         else:
             _send(f"⚠️ ไม่สามารถสร้างกราฟ {sym}")
 
+    elif cmd == "/restart":
+        ctrl.stop_bot(by=username)
+        _send("🔄 <b>กำลังรีสตาร์ท main.py...</b>\nLauncher จะเริ่มใหม่อัตโนมัติภายใน 10 วินาที")
+
+    elif cmd in ("/runmain", "/stopmain", "/mainstat"):
+        _send(
+            "ℹ️ คำสั่งนี้ใช้ได้เฉพาะเมื่อรัน <code>launcher.py</code>\n"
+            "ปัจจุบัน main.py กำลังรันอยู่แล้ว"
+        )
+
     else:
         _send(
             "❓ <b>คำสั่งที่ใช้ได้</b>\n\n"
@@ -229,7 +239,12 @@ def _handle(text, username):
             "/enable SYMBOL — เปิด auto trade symbol นั้น\n"
             "/disable SYMBOL — ปิด auto trade symbol นั้น\n"
             "/close [SYMBOL] — ปิด position (ทั้งหมด หรือเฉพาะ symbol)\n"
-            "/chart [SYMBOL] — ดูกราฟ"
+            "/chart [SYMBOL] — ดูกราฟ\n\n"
+            "<b>Launcher (ใช้ได้เมื่อรัน launcher.py):</b>\n"
+            "/runmain  — เริ่ม main.py\n"
+            "/stopmain — หยุด main.py\n"
+            "/restart  — รีสตาร์ท main.py\n"
+            "/mainstat — ดูสถานะ main.py"
         )
 
 
