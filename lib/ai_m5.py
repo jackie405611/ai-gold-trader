@@ -1,48 +1,12 @@
 # ============================================================
 #  lib/ai_m5.py  —  M5 Trend Engine (V3)
-#  Fixes:
-#   - ADX DM filter uses raw series before mutation
-#   - DX denominator guard against inf (replace instead of fillna)
 # ============================================================
-import pandas as pd
 try:
     from lib.config import CONFIRM_BARS
+    from lib.indicators import ema, adx as calc_adx
 except ImportError:
     from config import CONFIRM_BARS
-
-
-def _ema(series, span):
-    return series.ewm(span=span, adjust=False).mean()
-
-
-def _adx(df, period=14):
-    """Average Directional Index — วัดความแรงของ trend"""
-    high  = df["high"]
-    low   = df["low"]
-    close = df["close"]
-
-    # fix: save raw values before mutual filter to avoid reading mutated series
-    raw_plus  = high.diff().clip(lower=0)
-    raw_minus = (-low.diff()).clip(lower=0)
-    plus_dm   = raw_plus.where(raw_plus > raw_minus, 0)
-    minus_dm  = raw_minus.where(raw_minus >= raw_plus, 0)  # >= handles equal → both 0
-
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low  - close.shift()).abs()
-    ], axis=1).max(axis=1)
-
-    atr      = tr.ewm(span=period, adjust=False).mean().replace(0, 1e-10)
-    plus_di  = 100 * plus_dm.ewm(span=period, adjust=False).mean() / atr
-    minus_di = 100 * minus_dm.ewm(span=period, adjust=False).mean() / atr
-
-    # fix: guard against inf by replacing zero denominator before division
-    denom = (plus_di + minus_di).replace(0, 1e-10)
-    dx    = (100 * (plus_di - minus_di).abs() / denom).fillna(0)
-    adx   = dx.ewm(span=period, adjust=False).mean()
-
-    return adx, plus_di, minus_di
+    from indicators import ema, adx as calc_adx
 
 
 def trend_signal(df):
@@ -52,12 +16,12 @@ def trend_signal(df):
     เงื่อนไข SELL : EMA20 < EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20 + -DI > +DI
     """
     close = df["close"]
-    ema20 = _ema(close, 20)
-    ema50 = _ema(close, 50)
+    ema20 = ema(close, 20)
+    ema50 = ema(close, 50)
 
-    adx, plus_di, minus_di = _adx(df)
+    adx_s, plus_di, minus_di = calc_adx(df)
 
-    last_adx = adx.iloc[-1]
+    last_adx     = adx_s.iloc[-1]
     trend_strong = last_adx > 20
 
     bullish_bars = sum(
@@ -80,5 +44,5 @@ def trend_signal(df):
 
 def get_trend_strength(df):
     """คืน ADX value เพื่อแสดงในรายงาน"""
-    adx, _, _ = _adx(df)
-    return round(adx.iloc[-1], 2)
+    adx_s, _, _ = calc_adx(df)
+    return round(adx_s.iloc[-1], 2)

@@ -1,122 +1,504 @@
-# ============================================================
-#  ai_strategy.py  —  Signal Aggregator + Market Regime  (V3)
-#  MIN/MAX_VOLATILITY อ่านจาก cfg ของแต่ละ symbol
-# ============================================================
+# ai_strategy.py
+import math
 import pandas as pd
 
-
-# ── Helpers ──────────────────────────────────────────────────
-
-def _ema(s, n):
-    return s.ewm(span=n, adjust=False).mean()
-
-def _rsi(s, p=14):
-    d = s.diff()
-    g = d.clip(lower=0).ewm(com=p-1, adjust=False).mean()
-    l = (-d).clip(lower=0).ewm(com=p-1, adjust=False).mean()
-    return 100 - 100 / (1 + g / l.replace(0, 1e-10))
-
-def _atr(df, p=14):
-    h, l, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
-    return tr.ewm(span=p, adjust=False).mean()
-
-def _bollinger_width(s, p=20):
-    std = s.rolling(p).std()
-    mid = s.rolling(p).mean()
-    return (2 * std / mid * 100).iloc[-1]  # % width
+VALID_MODES = {"auto", "pullback", "breakout", "range"}
 
 
-# ── Market Regime Detection ───────────────────────────────────
+def _safe_float(value, default=0.0):
+    try:
+        v = float(value)
+        if math.isnan(v) or math.isinf(v):
+            return default
+        return v
+    except Exception:
+        return default
 
-def detect_regime(df, max_volatility=8.0):
-    """
-    คืน: "TRENDING" | "RANGING" | "VOLATILE"
-    max_volatility : อ่านจาก cfg ของแต่ละ symbol
-    """
+
+def _has_min_bars(df, n):
+    return df is not None and len(df) >= n
+
+
+def _ema(series, span):
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def _atr(df, period=14):
+    high = df["high"]
+    low = df["low"]
     close = df["close"]
-    high  = df["high"]
-    low   = df["low"]
 
-    atr_val = _atr(df).iloc[-1]
-    bb_width = _bollinger_width(close)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - close.shift()).abs(),
+            (low - close.shift()).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
 
-    # Simple ADX
-    plus_dm  = high.diff().clip(lower=0)
-    minus_dm = (-low.diff()).clip(lower=0)
-    plus_dm  = plus_dm.where(plus_dm > minus_dm, 0)
-    minus_dm = minus_dm.where(minus_dm > plus_dm, 0)
-    tr = pd.concat([high-low,(high-close.shift()).abs(),(low-close.shift()).abs()],axis=1).max(axis=1)
-    atr_s    = tr.ewm(span=14, adjust=False).mean()
-    plus_di  = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr_s
-    minus_di = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr_s
-    dx       = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10))
-    adx      = dx.ewm(span=14, adjust=False).mean().iloc[-1]
+    return tr.ewm(span=period, adjust=False).mean()
 
-    if atr_val > max_volatility:
-        return "VOLATILE", adx, atr_val
-    elif adx > 25:
-        return "TRENDING", adx, atr_val
+
+def _rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+    rs = avg_gain / avg_loss.replace(0, 1e-9)
+    return 100 - (100 / (1 + rs))
+
+
+def _adx(df, period=14):
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
+    minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
+
+    tr = pd.concat(
+        [
+            high - low,
+            (high - close.shift()).abs(),
+            (low - close.shift()).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr = tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr.replace(0, 1e-9))
+    minus_di = 100 * (minus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr.replace(0, 1e-9))
+
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, 1e-9)) * 100
+    adx = dx.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+    return adx, plus_di, minus_di
+
+
+def _bullish_engulfing(df):
+    if not _has_min_bars(df, 2):
+        return False
+    prev = df.iloc[-2]
+    cur = df.iloc[-1]
+    return (
+        prev["close"] < prev["open"]
+        and cur["close"] > cur["open"]
+        and cur["open"] <= prev["close"]
+        and cur["close"] >= prev["open"]
+    )
+
+
+def _bearish_engulfing(df):
+    if not _has_min_bars(df, 2):
+        return False
+    prev = df.iloc[-2]
+    cur = df.iloc[-1]
+    return (
+        prev["close"] > prev["open"]
+        and cur["close"] < cur["open"]
+        and cur["open"] >= prev["close"]
+        and cur["close"] <= prev["open"]
+    )
+
+
+def _pinbar_bull(df):
+    if not _has_min_bars(df, 1):
+        return False
+    c = df.iloc[-1]
+    body = abs(c["close"] - c["open"])
+    lower_wick = min(c["open"], c["close"]) - c["low"]
+    upper_wick = c["high"] - max(c["open"], c["close"])
+    return lower_wick > body * 1.5 and lower_wick > upper_wick
+
+
+def _pinbar_bear(df):
+    if not _has_min_bars(df, 1):
+        return False
+    c = df.iloc[-1]
+    body = abs(c["close"] - c["open"])
+    upper_wick = c["high"] - max(c["open"], c["close"])
+    lower_wick = min(c["open"], c["close"]) - c["low"]
+    return upper_wick > body * 1.5 and upper_wick > lower_wick
+
+
+def _break_of_structure_up(df, lookback=5):
+    if not _has_min_bars(df, lookback + 2):
+        return False
+    prev_high = _safe_float(df["high"].iloc[-(lookback + 1):-1].max())
+    return _safe_float(df["close"].iloc[-1]) > prev_high
+
+
+def _break_of_structure_down(df, lookback=5):
+    if not _has_min_bars(df, lookback + 2):
+        return False
+    prev_low = _safe_float(df["low"].iloc[-(lookback + 1):-1].min())
+    return _safe_float(df["close"].iloc[-1]) < prev_low
+
+
+def _last_swing_low(df, lookback=10):
+    return _safe_float(df["low"].tail(lookback).min())
+
+
+def _last_swing_high(df, lookback=10):
+    return _safe_float(df["high"].tail(lookback).max())
+
+
+def detect_regime(df_h1, cfg=None):
+    cfg = cfg or {}
+
+    if not _has_min_bars(df_h1, 60):
+        return {
+            "regime": "INSUFFICIENT_DATA",
+            "atr_h1": 0.0,
+            "adx_h1": 0.0,
+            "plus_di_h1": 0.0,
+            "minus_di_h1": 0.0,
+        }
+
+    atr_val = _safe_float(_atr(df_h1, 14).iloc[-1])
+    adx_s, plus_di, minus_di = _adx(df_h1, 14)
+    adx_val = _safe_float(adx_s.iloc[-1])
+
+    min_vol = cfg.get("min_volatility", 0.3)
+    max_vol = cfg.get("max_volatility", 8.0)
+    adx_trend = cfg.get("adx_trend_threshold", 25)
+
+    if atr_val > max_vol:
+        regime = "VOLATILE"
+    elif atr_val < min_vol:
+        regime = "QUIET"
+    elif adx_val >= adx_trend:
+        regime = "TRENDING"
     else:
-        return "RANGING", adx, atr_val
+        regime = "RANGING"
 
-
-# ── Main Signal Generator ─────────────────────────────────────
-
-def generate_signal(df_m5, df_m1=None, cfg=None):
-    """
-    Input : df_m5, df_m1 (optional), cfg (dict ของ symbol จาก config.SYMBOLS)
-    Output: "BUY" | "SELL" | "NO TRADE", dict(info)
-    """
-    min_vol = (cfg or {}).get("min_volatility", 0.3)
-    max_vol = (cfg or {}).get("max_volatility", 8.0)
-
-    # ── 1. Regime ──
-    regime, adx_val, atr_val = detect_regime(df_m5, max_vol)
-    info = {
+    return {
         "regime": regime,
-        "adx":    round(adx_val, 1),
-        "atr":    round(atr_val, 4),
+        "atr_h1": round(atr_val, 4),
+        "adx_h1": round(adx_val, 2),
+        "plus_di_h1": round(_safe_float(plus_di.iloc[-1]), 2),
+        "minus_di_h1": round(_safe_float(minus_di.iloc[-1]), 2),
     }
 
-    if regime == "VOLATILE":
-        return "NO TRADE", {**info, "reason": "High volatility / news spike"}
 
-    if atr_val < min_vol:
-        return "NO TRADE", {**info, "reason": "Market too quiet (low ATR)"}
+def market_bias(df_h1, cfg=None):
+    if not _has_min_bars(df_h1, 220):
+        return {
+            "bias": "NONE",
+            "close_h1": 0.0,
+            "ema50_h1": 0.0,
+            "ema200_h1": 0.0,
+            "range_high_20": 0.0,
+            "range_low_20": 0.0,
+        }
 
-    # ── 2. M5 Signal ──
-    close = df_m5["close"]
-    ema_f = _ema(close, 20)
-    ema_s = _ema(close, 50)
-    rsi_v = _rsi(close)
+    close = df_h1["close"]
+    ema50 = _ema(close, 50)
+    ema200 = _ema(close, 200)
 
-    fast      = ema_f.iloc[-1]
-    slow      = ema_s.iloc[-1]
-    last_rsi  = rsi_v.iloc[-1]
+    last_close = _safe_float(close.iloc[-1])
+    last_ema50 = _safe_float(ema50.iloc[-1])
+    last_ema200 = _safe_float(ema200.iloc[-1])
 
-    m5_signal = "NONE"
-    if fast > slow and last_rsi > 50:
-        m5_signal = "BUY"
-    elif fast < slow and last_rsi < 50:
-        m5_signal = "SELL"
+    if last_close > last_ema50 > last_ema200:
+        bias = "BUY"
+    elif last_close < last_ema50 < last_ema200:
+        bias = "SELL"
+    else:
+        bias = "NONE"
 
-    info["m5_signal"] = m5_signal
-    info["m5_rsi"]    = round(last_rsi, 1)
+    return {
+        "bias": bias,
+        "close_h1": round(last_close, 2),
+        "ema50_h1": round(last_ema50, 2),
+        "ema200_h1": round(last_ema200, 2),
+        "range_high_20": round(_safe_float(df_h1["high"].tail(20).max()), 2),
+        "range_low_20": round(_safe_float(df_h1["low"].tail(20).min()), 2),
+    }
 
-    if m5_signal == "NONE":
-        return "NO TRADE", {**info, "reason": "No M5 consensus"}
 
-    # ── 3. M1 Confirmation (ถ้ามี) ──
-    if df_m1 is not None:
-        m1_close = df_m1["close"]
-        m1_rsi   = _rsi(m1_close).iloc[-1]
-        info["m1_rsi"] = round(m1_rsi, 1)
+def pullback_zone(df_h1, bias):
+    if not _has_min_bars(df_h1, 60):
+        return {
+            "zone_low": 0.0,
+            "zone_high": 0.0,
+            "in_zone": False,
+            "swing_high": 0.0,
+            "swing_low": 0.0,
+        }
 
-        # Trend-following: ไม่ buy ตอน M1 overbought, ไม่ sell ตอน M1 oversold
-        if m5_signal == "BUY"  and m1_rsi > 70:
-            return "NO TRADE", {**info, "reason": "M1 overbought on BUY"}
-        if m5_signal == "SELL" and m1_rsi < 30:
-            return "NO TRADE", {**info, "reason": "M1 oversold on SELL"}
+    close = df_h1["close"]
+    high = df_h1["high"]
+    low = df_h1["low"]
 
-    return m5_signal, {**info, "reason": "OK"}
+    ema20 = _ema(close, 20)
+    ema50 = _ema(close, 50)
+
+    last_price = _safe_float(close.iloc[-1])
+
+    swing_high = _safe_float(high.tail(30).max())
+    swing_low = _safe_float(low.tail(30).min())
+    move = max(swing_high - swing_low, 1e-9)
+
+    fib50_buy = swing_high - (move * 0.50)
+    fib618_buy = swing_high - (move * 0.618)
+
+    fib50_sell = swing_low + (move * 0.50)
+    fib618_sell = swing_low + (move * 0.618)
+
+    if bias == "BUY":
+        zone_low = min(_safe_float(ema50.iloc[-1]), fib618_buy)
+        zone_high = max(_safe_float(ema20.iloc[-1]), fib50_buy)
+        in_zone = zone_low <= last_price <= zone_high
+    elif bias == "SELL":
+        zone_low = min(_safe_float(ema20.iloc[-1]), fib50_sell)
+        zone_high = max(_safe_float(ema50.iloc[-1]), fib618_sell)
+        in_zone = zone_low <= last_price <= zone_high
+    else:
+        zone_low = last_price
+        zone_high = last_price
+        in_zone = False
+
+    return {
+        "zone_low": round(zone_low, 2),
+        "zone_high": round(zone_high, 2),
+        "in_zone": in_zone,
+        "swing_high": round(swing_high, 2),
+        "swing_low": round(swing_low, 2),
+    }
+
+
+def confirm_pullback(df_m15, df_m5, df_m1, bias, cfg=None):
+    cfg = cfg or {}
+
+    if not _has_min_bars(df_m1, 20) or not _has_min_bars(df_m5, 5):
+        return {
+            "confirmed": False,
+            "rsi_m1": 0.0,
+            "confirm_reason": "insufficient lower timeframe data",
+        }
+
+    rsi_m1 = _rsi(df_m1["close"], 14)
+    last_rsi = _safe_float(rsi_m1.iloc[-1])
+
+    if bias == "BUY":
+        confirmed = (
+            (_bullish_engulfing(df_m5) or _pinbar_bull(df_m5))
+            and _break_of_structure_up(df_m1, lookback=5)
+            and last_rsi <= cfg.get("rsi_pullback_buy_max", 45)
+        )
+        reason = "bullish reversal on M5 + BOS up on M1 + RSI support"
+    elif bias == "SELL":
+        confirmed = (
+            (_bearish_engulfing(df_m5) or _pinbar_bear(df_m5))
+            and _break_of_structure_down(df_m1, lookback=5)
+            and last_rsi >= cfg.get("rsi_pullback_sell_min", 55)
+        )
+        reason = "bearish reversal on M5 + BOS down on M1 + RSI support"
+    else:
+        confirmed = False
+        reason = "no market bias"
+
+    return {
+        "confirmed": confirmed,
+        "rsi_m1": round(last_rsi, 2),
+        "confirm_reason": reason,
+    }
+
+
+def breakout_retest_signal(df_h1, df_m15, df_m5, cfg=None):
+    cfg = cfg or {}
+
+    if not _has_min_bars(df_h1, 25) or not _has_min_bars(df_m15, 20) or not _has_min_bars(df_m5, 5):
+        return "NO TRADE", {
+            "strategy": "breakout",
+            "reason": "insufficient data",
+            "resistance": 0.0,
+            "support": 0.0,
+        }
+
+    close_h1 = _safe_float(df_h1["close"].iloc[-1])
+    resistance = _safe_float(df_h1["high"].iloc[-21:-1].max())
+    support = _safe_float(df_h1["low"].iloc[-21:-1].min())
+    atr_m15 = _safe_float(_atr(df_m15, 14).iloc[-1])
+
+    breakout_buffer = cfg.get("breakout_buffer_atr", 0.15)
+
+    buy_break = close_h1 > resistance + (atr_m15 * breakout_buffer)
+    sell_break = close_h1 < support - (atr_m15 * breakout_buffer)
+
+    if buy_break:
+        retest_ok = _safe_float(df_m15["low"].tail(3).min()) <= resistance and _safe_float(df_m5["close"].iloc[-1]) > resistance
+        if retest_ok and (_bullish_engulfing(df_m5) or _pinbar_bull(df_m5)):
+            return "BUY", {
+                "strategy": "breakout",
+                "reason": "H1 breakout and successful retest",
+                "level": round(resistance, 2),
+            }
+
+    if sell_break:
+        retest_ok = _safe_float(df_m15["high"].tail(3).max()) >= support and _safe_float(df_m5["close"].iloc[-1]) < support
+        if retest_ok and (_bearish_engulfing(df_m5) or _pinbar_bear(df_m5)):
+            return "SELL", {
+                "strategy": "breakout",
+                "reason": "H1 breakdown and successful retest",
+                "level": round(support, 2),
+            }
+
+    return "NO TRADE", {
+        "strategy": "breakout",
+        "reason": "breakout/retest not confirmed",
+        "resistance": round(resistance, 2),
+        "support": round(support, 2),
+    }
+
+
+def range_reversal_signal(df_h1, df_m15, df_m5, cfg=None):
+    cfg = cfg or {}
+
+    if not _has_min_bars(df_h1, 35) or not _has_min_bars(df_m15, 20) or not _has_min_bars(df_m5, 5):
+        return "NO TRADE", {
+            "strategy": "range",
+            "reason": "insufficient data",
+            "range_high": 0.0,
+            "range_low": 0.0,
+        }
+
+    range_high = _safe_float(df_h1["high"].tail(30).max())
+    range_low = _safe_float(df_h1["low"].tail(30).min())
+    last = _safe_float(df_h1["close"].iloc[-1])
+
+    width = max(range_high - range_low, 1e-9)
+    pos = (last - range_low) / width
+
+    rsi_m15 = _safe_float(_rsi(df_m15["close"], 14).iloc[-1])
+
+    if pos <= cfg.get("range_buy_zone_max", 0.25):
+        if (_bullish_engulfing(df_m5) or _pinbar_bull(df_m5)) and rsi_m15 <= cfg.get("range_rsi_buy_max", 40):
+            return "BUY", {
+                "strategy": "range",
+                "reason": "near range support with bullish reversal",
+                "range_high": round(range_high, 2),
+                "range_low": round(range_low, 2),
+            }
+
+    if pos >= cfg.get("range_sell_zone_min", 0.75):
+        if (_bearish_engulfing(df_m5) or _pinbar_bear(df_m5)) and rsi_m15 >= cfg.get("range_rsi_sell_min", 60):
+            return "SELL", {
+                "strategy": "range",
+                "reason": "near range resistance with bearish reversal",
+                "range_high": round(range_high, 2),
+                "range_low": round(range_low, 2),
+            }
+
+    return "NO TRADE", {
+        "strategy": "range",
+        "reason": "price not at range edge or no confirmation",
+        "range_high": round(range_high, 2),
+        "range_low": round(range_low, 2),
+    }
+
+
+def build_trade_plan(df_m15, signal, cfg=None):
+    cfg = cfg or {}
+
+    if not _has_min_bars(df_m15, 20):
+        return {"entry": None, "sl": None, "tp": None, "atr_m15": 0.0, "rr": 0.0}
+
+    atr_val = _safe_float(_atr(df_m15, 14).iloc[-1])
+    entry = _safe_float(df_m15["close"].iloc[-1])
+
+    sl_mult = cfg.get("atr_sl_mult", 1.5)
+    tp_mult = cfg.get("atr_tp_mult", 2.5)
+
+    if signal == "BUY":
+        swing = _last_swing_low(df_m15, lookback=10)
+        sl = min(swing, entry - atr_val * sl_mult)
+        tp = entry + atr_val * tp_mult
+        risk = max(entry - sl, 1e-9)
+        reward = max(tp - entry, 1e-9)
+    else:
+        swing = _last_swing_high(df_m15, lookback=10)
+        sl = max(swing, entry + atr_val * sl_mult)
+        tp = entry - atr_val * tp_mult
+        risk = max(sl - entry, 1e-9)
+        reward = max(entry - tp, 1e-9)
+
+    rr = reward / risk
+
+    return {
+        "entry": round(entry, 2),
+        "sl": round(sl, 2),
+        "tp": round(tp, 2),
+        "atr_m15": round(atr_val, 4),
+        "rr": round(rr, 2),
+    }
+
+
+def analyze_signal(df_h1, df_m15, df_m5, df_m1, cfg=None, mode="auto"):
+    cfg = cfg or {}
+    requested_mode = (mode or "auto").lower().strip()
+    if requested_mode not in VALID_MODES:
+        requested_mode = "auto"
+
+    regime = detect_regime(df_h1, cfg)
+    bias = market_bias(df_h1, cfg)
+    zone = pullback_zone(df_h1, bias["bias"])
+    confirm = confirm_pullback(df_m15, df_m5, df_m1, bias["bias"], cfg)
+
+    effective_mode = requested_mode
+    if effective_mode == "auto":
+        effective_mode = "pullback" if regime["regime"] == "TRENDING" else "range"
+
+    info = {
+        **regime,
+        **bias,
+        **zone,
+        **confirm,
+        "requested_mode": requested_mode,
+        "effective_mode": effective_mode,
+    }
+
+    if regime["regime"] in {"VOLATILE", "QUIET", "INSUFFICIENT_DATA"}:
+        return "NO TRADE", {**info, "reason": f"regime={regime['regime']}"}
+
+    if effective_mode == "pullback":
+        if bias["bias"] in {"BUY", "SELL"} and zone["in_zone"] and confirm["confirmed"]:
+            plan = build_trade_plan(df_m15, bias["bias"], cfg)
+            return bias["bias"], {
+                **info,
+                **plan,
+                "strategy": "pullback",
+                "reason": "trend + pullback zone + confirmation",
+            }
+        return "NO TRADE", {
+            **info,
+            "strategy": "pullback",
+            "reason": "bias/zone/confirmation not complete",
+        }
+
+    if effective_mode == "breakout":
+        sig, extra = breakout_retest_signal(df_h1, df_m15, df_m5, cfg)
+        if sig in {"BUY", "SELL"}:
+            plan = build_trade_plan(df_m15, sig, cfg)
+            return sig, {**info, **extra, **plan}
+        return sig, {**info, **extra}
+
+    if effective_mode == "range":
+        sig, extra = range_reversal_signal(df_h1, df_m15, df_m5, cfg)
+        if sig in {"BUY", "SELL"}:
+            plan = build_trade_plan(df_m15, sig, cfg)
+            return sig, {**info, **extra, **plan}
+        return sig, {**info, **extra}
+
+    return "NO TRADE", {**info, "reason": "invalid mode"}
+
+
+generate_signal = analyze_signal
