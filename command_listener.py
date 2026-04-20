@@ -1,28 +1,34 @@
 # ============================================================
 #  command_listener.py  —  Telegram Commands V3
-#  คำสั่งใหม่: /enable SYMBOL, /disable SYMBOL, /symbols
 # ============================================================
-import threading, requests, time
+import threading
+import time
+import requests
 import MetaTrader5 as mt5
-import bot_controller as ctrl
 
-from config import SYMBOLS
+import bot_controller as ctrl
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, SYMBOLS
 from data_fetcher import get_candles
 from ai_strategy import analyze_signal
-from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, SYMBOLS
-import bot_controller as ctrl
 
-_BASE        = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+_BASE = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 _last_update = 0
 
 
 def _send(text):
     try:
-        requests.post(f"{_BASE}/sendMessage",
-            data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
-            timeout=8)
+        requests.post(
+            f"{_BASE}/sendMessage",
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+            },
+            timeout=8,
+        )
     except Exception as e:
         print(f"[Cmd] send error: {e}")
+
 
 def _format_signal(sym, sig, info):
     lines = [
@@ -47,6 +53,7 @@ def _format_signal(sym, sig, info):
 
     return "\n".join(lines)
 
+
 def _handle(text, username):
     parts = text.strip().split()
     cmd = parts[0].lower() if parts else ""
@@ -68,44 +75,55 @@ def _handle(text, username):
 
     # ── Symbol-level commands ───────────────────────────────
     elif cmd == "/enable":
-        if not arg:
+        if not arg1:
             _send("❓ ระบุ symbol ด้วย เช่น <code>/enable EURUSDm</code>")
             return
-        ok = ctrl.enable_symbol(arg, by=username)
+        ok = ctrl.enable_symbol(arg1, by=username)
         if ok:
-            _send(f"✅ <b>{arg}</b> — เปิด auto trade แล้ว")
+            _send(f"✅ <b>{arg1}</b> — เปิด auto trade แล้ว")
         else:
-            _send(f"❌ ไม่พบ symbol <code>{arg}</code>\nดู /symbols สำหรับรายชื่อ")
+            _send(f"❌ ไม่พบ symbol <code>{arg1}</code>\nดู /symbols สำหรับรายชื่อ")
 
     elif cmd == "/disable":
-        if not arg:
+        if not arg1:
             _send("❓ ระบุ symbol ด้วย เช่น <code>/disable EURUSDm</code>")
             return
-        ok = ctrl.disable_symbol(arg, reason="Disabled by user", by=username)
+        ok = ctrl.disable_symbol(arg1, reason="Disabled by user", by=username)
         if ok:
-            _send(f"⏸ <b>{arg}</b> — ปิด auto trade แล้ว (ยังแจ้งสัญญาณ)")
+            _send(f"⏸ <b>{arg1}</b> — ปิด auto trade แล้ว (ยังแจ้งสัญญาณ)")
         else:
-            _send(f"❌ ไม่พบ symbol <code>{arg}</code>")
+            _send(f"❌ ไม่พบ symbol <code>{arg1}</code>")
 
     elif cmd == "/symbols":
         lines = ["📋 <b>Symbol Status</b>\n━━━━━━━━━━━━━━━━"]
         for sym, cfg in SYMBOLS.items():
-            state   = ctrl.is_symbol_enabled(sym)
+            state = ctrl.is_symbol_enabled(sym)
             trading = ctrl.is_trading_enabled()
+            mode = ctrl.get_strategy_mode(sym)
+
             if trading and state:
                 icon = "✅ Auto"
             elif state:
                 icon = "⏸ Alert"
             else:
                 icon = "⛔ Off"
-            lines.append(f"{icon}  <code>{sym}</code>  ({cfg['label']})")
-        lines.append("\n/enable SYMBOL — เปิด auto trade")
-        lines.append("/disable SYMBOL — เปิดแค่ alert")
+
+            lines.append(f"{icon} <code>{sym}</code> ({cfg['label']}) mode=<code>{mode}</code>")
+
+        lines.append("")
+        lines.append("/enable SYMBOL — เปิด auto trade")
+        lines.append("/disable SYMBOL — ปิด auto trade")
+        lines.append("/mode SYMBOL — ดู strategy mode")
+        lines.append("/setmode SYMBOL MODE — ตั้ง strategy mode")
         _send("\n".join(lines))
 
     elif cmd == "/mode":
         if not arg1:
             _send("❓ ใช้แบบนี้ <code>/mode XAUUSDm</code>")
+            return
+
+        if arg1 not in SYMBOLS:
+            _send(f"❌ ไม่พบ symbol <code>{arg1}</code>")
             return
 
         mode = ctrl.get_strategy_mode(arg1)
@@ -153,13 +171,15 @@ def _handle(text, username):
             mode=mode,
         )
         _send(_format_signal(sym, sig, info))
-        
+
     # ── Info commands ───────────────────────────────────────
     elif cmd == "/status":
         from risk_manager import get_risk_summary
-        rs    = get_risk_summary()
+
+        rs = get_risk_summary()
         state = ctrl.get_status()
-        auto  = "✅ ON" if state["trading_enabled"] else "⏸ OFF"
+        auto = "✅ ON" if state["trading_enabled"] else "⏸ OFF"
+
         _send(
             f"📊 <b>Bot Status</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -174,9 +194,10 @@ def _handle(text, username):
 
     elif cmd == "/close":
         from trade_manager import close_all_positions
-        if arg and arg in SYMBOLS:
-            close_all_positions(arg, comment="manual_close")
-            _send(f"🔒 ปิด position <b>{arg}</b> แล้ว")
+
+        if arg1 and arg1 in SYMBOLS:
+            close_all_positions(arg1, comment="manual_close")
+            _send(f"🔒 ปิด position <b>{arg1}</b> แล้ว")
         else:
             for sym in SYMBOLS:
                 close_all_positions(sym, comment="manual_close")
@@ -184,8 +205,9 @@ def _handle(text, username):
 
     elif cmd == "/chart":
         from chart_generator import generate_chart
-        from telegram_bot    import send_chart
-        sym = arg if arg in SYMBOLS else list(SYMBOLS.keys())[0]
+        from telegram_bot import send_chart
+
+        sym = arg1 if arg1 in SYMBOLS else list(SYMBOLS.keys())[0]
         chart = generate_chart(symbol=sym)
         if chart:
             send_chart(chart, f"📊 {sym}", blocking=True)
@@ -196,13 +218,18 @@ def _handle(text, username):
         _send(
             "❓ <b>คำสั่งที่ใช้ได้</b>\n\n"
             "<b>Bot level:</b>\n"
-            "/start          — เปิด auto trade ทุก symbol\n"
-            "/stop           — หยุด auto trade (แจ้งสัญญาณต่อ)\n"
-            "/quit           — ปิด bot\n"
-            "/status         — ดูสถานะรวม\n"
-            "/symbols        — ดูสถานะทุก symbol\n\n"
+            "/start — เปิด auto trade ทุก symbol\n"
+            "/stop — หยุด auto trade (แจ้งสัญญาณต่อ)\n"
+            "/quit — ปิด bot\n"
+            "/status — ดูสถานะรวม\n"
+            "/symbols — ดูสถานะทุก symbol\n\n"
+            "<b>Strategy:</b>\n"
+            "/signal [SYMBOL] [MODE] — วิเคราะห์สัญญาณตอนนี้\n"
+            "/mode SYMBOL — ดู mode ปัจจุบัน\n"
+            "/setmode SYMBOL MODE — ตั้งโหมด strategy\n"
+            "MODE: auto | pullback | breakout | range\n\n"
             "<b>Symbol level:</b>\n"
-            "/enable SYMBOL  — เปิด auto trade symbol นั้น\n"
+            "/enable SYMBOL — เปิด auto trade symbol นั้น\n"
             "/disable SYMBOL — ปิด auto trade symbol นั้น\n"
             "/close [SYMBOL] — ปิด position (ทั้งหมด หรือเฉพาะ symbol)\n"
             "/chart [SYMBOL] — ดูกราฟ"
@@ -212,25 +239,40 @@ def _handle(text, username):
 def _poll_loop():
     global _last_update
     print("[Cmd] Listener started")
+
     while ctrl.is_bot_running():
         try:
-            resp = requests.get(f"{_BASE}/getUpdates",
-                params={"offset": _last_update + 1, "timeout": 2}, timeout=10)
+            resp = requests.get(
+                f"{_BASE}/getUpdates",
+                params={"offset": _last_update + 1, "timeout": 2},
+                timeout=10,
+            )
+
             if resp.status_code != 200:
-                time.sleep(3); continue
+                time.sleep(3)
+                continue
+
             for upd in resp.json().get("result", []):
                 _last_update = upd["update_id"]
                 msg = upd.get("message") or upd.get("edited_message")
-                if not msg: continue
-                if str(msg["chat"]["id"]) != str(TELEGRAM_CHAT_ID): continue
+                if not msg:
+                    continue
+
+                if str(msg["chat"]["id"]) != str(TELEGRAM_CHAT_ID):
+                    continue
+
                 text = msg.get("text", "")
                 user = msg.get("from", {}).get("username", "unknown")
+
                 if text.startswith("/"):
                     print(f"[Cmd] @{user}: {text}")
                     _handle(text, user)
+
         except Exception as e:
             print(f"[Cmd] Poll error: {e}")
+
         time.sleep(2)
+
     print("[Cmd] Listener stopped")
 
 
