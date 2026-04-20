@@ -35,7 +35,8 @@ def _format_signal(sym, sig, info):
         f"📊 <b>{sym}</b>",
         f"signal: <b>{sig}</b>",
         f"strategy: <code>{info.get('strategy', '-')}</code>",
-        f"mode: <code>{info.get('requested_mode', '-')}</code>",
+        f"requested_mode: <code>{info.get('requested_mode', '-')}</code>",
+        f"effective_mode: <code>{info.get('effective_mode', info.get('requested_mode', '-'))}</code>",
         f"regime: <code>{info.get('regime', '-')}</code>",
         f"bias: <code>{info.get('bias', '-')}</code>",
         f"zone: <code>{info.get('zone_low', '-')} - {info.get('zone_high', '-')}</code>",
@@ -60,7 +61,6 @@ def _handle(text, username):
     arg1 = parts[1].upper() if len(parts) > 1 else ""
     arg2 = parts[2].lower() if len(parts) > 2 else ""
 
-    # ── Bot-level commands ──────────────────────────────────
     if cmd == "/start":
         ctrl.enable_trading(by=username)
         _send("✅ <b>Auto Trading ENABLED</b>\nบอทจะเปิด trade อัตโนมัติสำหรับทุก symbol ที่เปิดอยู่")
@@ -73,10 +73,9 @@ def _handle(text, username):
         ctrl.stop_bot(by=username)
         _send("🛑 <b>Bot shutting down...</b>")
 
-    # ── Symbol-level commands ───────────────────────────────
     elif cmd == "/enable":
         if not arg1:
-            _send("❓ ระบุ symbol ด้วย เช่น <code>/enable EURUSDm</code>")
+            _send("❓ ระบุ symbol ด้วย เช่น <code>/enable XAUUSDm</code>")
             return
         ok = ctrl.enable_symbol(arg1, by=username)
         if ok:
@@ -86,7 +85,7 @@ def _handle(text, username):
 
     elif cmd == "/disable":
         if not arg1:
-            _send("❓ ระบุ symbol ด้วย เช่น <code>/disable EURUSDm</code>")
+            _send("❓ ระบุ symbol ด้วย เช่น <code>/disable XAUUSDm</code>")
             return
         ok = ctrl.disable_symbol(arg1, reason="Disabled by user", by=username)
         if ok:
@@ -95,7 +94,7 @@ def _handle(text, username):
             _send(f"❌ ไม่พบ symbol <code>{arg1}</code>")
 
     elif cmd == "/symbols":
-        lines = ["📋 <b>Symbol Status</b>\n━━━━━━━━━━━━━━━━"]
+        lines = ["📋 <b>Symbol Status</b>", "━━━━━━━━━━━━━━━━"]
         for sym, cfg in SYMBOLS.items():
             state = ctrl.is_symbol_enabled(sym)
             trading = ctrl.is_trading_enabled()
@@ -121,7 +120,6 @@ def _handle(text, username):
         if not arg1:
             _send("❓ ใช้แบบนี้ <code>/mode XAUUSDm</code>")
             return
-
         if arg1 not in SYMBOLS:
             _send(f"❌ ไม่พบ symbol <code>{arg1}</code>")
             return
@@ -172,7 +170,6 @@ def _handle(text, username):
         )
         _send(_format_signal(sym, sig, info))
 
-    # ── Info commands ───────────────────────────────────────
     elif cmd == "/status":
         from risk_manager import get_risk_summary
 
