@@ -3,6 +3,7 @@
 #  วน loop ทุก symbol ใน config.SYMBOLS ในรอบเดียวกัน
 # ============================================================
 import time, traceback
+import bot_controller as ctrl
 import MetaTrader5 as mt5
 from datetime import datetime, timezone, timedelta
 
@@ -60,78 +61,86 @@ def _check_closed(symbol, prev_count):
 
 
 def _process_symbol(symbol, cfg, prev_counts):
-    """วิเคราะห์และ execute สำหรับ 1 symbol"""
-
-    # Trailing stop ทุก loop
     atr_live = get_latest_atr(symbol, mt5.TIMEFRAME_M1)
     update_trailing_stop(symbol, atr_live)
 
-    # ตรวจ closed positions
     prev_counts[symbol] = _check_closed(symbol, prev_counts.get(symbol, 0))
 
-    # ── Filters ──
-    if not spread_ok(symbol, cfg):    return
-    if not session_ok(cfg):           return
-    if position_exists(symbol):       return
-
-    # ── Data ──
-    df_m5 = get_candles(symbol, mt5.TIMEFRAME_M5)
-    df_m1 = get_candles(symbol, mt5.TIMEFRAME_M1)
-    if df_m5 is None or df_m1 is None:
+    if not spread_ok(symbol, cfg):
+        return
+    if not session_ok(cfg):
+        return
+    if position_exists(symbol):
         return
 
-    # ── AI (วิเคราะห์เสมอ ไม่ว่าสวิตช์จะเปิดหรือปิด) ──
-    final_signal, info = generate_signal(df_m5, df_m1, cfg=cfg)
-    regime = info.get("regime", "?")
-    adx    = info.get("adx", 0)
-    atr    = info.get("atr", atr_live)
-    label  = cfg.get("label", symbol)
+    df_h1 = get_candles(symbol, mt5.TIMEFRAME_H1)
+    df_m15 = get_candles(symbol, mt5.TIMEFRAME_M15)
+    df_m5 = get_candles(symbol, mt5.TIMEFRAME_M5)
+    df_m1 = get_candles(symbol, mt5.TIMEFRAME_M1)
 
-    print(f"[{symbol}] {final_signal}  Regime:{regime}  ADX:{adx}  ATR:{atr}")
+    if any(x is None for x in [df_h1, df_m15, df_m5, df_m1]):
+        print(f"[{symbol}] candle data unavailable")
+        return
+
+    strategy_mode = ctrl.get_strategy_mode(symbol)
+
+    final_signal, info = generate_signal(
+        df_h1=df_h1,
+        df_m15=df_m15,
+        df_m5=df_m5,
+        df_m1=df_m1,
+        cfg=cfg,
+        mode=strategy_mode,
+    )
+
+    print(
+        f"[{symbol}] signal={final_signal} "
+        f"mode={strategy_mode} "
+        f"strategy={info.get('strategy', '-')} "
+        f"regime={info.get('regime', '-')} "
+        f"bias={info.get('bias', '-')} "
+        f"reason={info.get('reason', '-')}"
+    )
 
     if final_signal not in ("BUY", "SELL"):
         return
 
-    # ── คำนวณ entry/SL/TP ──
-    tick  = mt5.symbol_info_tick(symbol)
-    price = tick.ask if final_signal == "BUY" else tick.bid
-    sl_m  = cfg.get("atr_sl_mult", 1.5)
-    tp_m  = cfg.get("atr_tp_mult", 2.5)
-    sl    = price - atr*sl_m if final_signal == "BUY" else price + atr*sl_m
-    tp    = price + atr*tp_m if final_signal == "BUY" else price - atr*tp_m
-    rr    = round(abs(tp - price) / max(abs(sl - price), 0.0001), 2)
+    entry = info.get("entry")
+    sl = info.get("sl")
+    tp = info.get("tp")
 
-    if ctrl.should_trade(symbol):
-        # ── AUTO MODE ──
-        result = open_trade(symbol, cfg, final_signal, atr)
-        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            _stats[symbol]["trades"] += 1
-            prev_counts[symbol] = prev_counts.get(symbol, 0) + 1
-            notify_trade_open(
-                signal=final_signal, price=round(price,2),
-                sl=round(sl,2), tp=round(tp,2),
-                lot=getattr(result, "volume", "?"),
-                atr=atr, regime=f"{regime} | {label}",
-            )
-            chart = generate_chart(symbol=symbol, signal_info=info)
-            if chart: send_chart(chart, f"📊 {label} Auto: {final_signal}")
-    else:
-        # ── ALERT ONLY MODE ──
-        emoji = "🟢" if final_signal == "BUY" else "🔴"
+    if entry is None or sl is None or tp is None:
+        print(f"[{symbol}] missing trade plan")
+        return
+
+    if not ctrl.should_trade(symbol):
         send_telegram(
-            f"{emoji} <b>SIGNAL — {final_signal} {label}</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"⚠️ <i>Manual Mode</i>\n"
-            f"💰 Entry : <code>{price:.5f}</code>\n"
-            f"🛡  SL    : <code>{sl:.5f}</code>\n"
-            f"🎯 TP    : <code>{tp:.5f}</code>\n"
-            f"📈 RR    : <code>1:{rr}</code>\n"
-            f"🌐 Regime: <code>{regime}</code>  ADX:<code>{adx}</code>\n"
-            f"💡 /enable {symbol}  เพื่อเปิด auto trade"
+            f"📣 <b>{symbol}</b> {final_signal}\n"
+            f"mode=<code>{strategy_mode}</code>\n"
+            f"strategy=<code>{info.get('strategy')}</code>\n"
+            f"entry=<code>{entry}</code>\n"
+            f"sl=<code>{sl}</code>\n"
+            f"tp=<code>{tp}</code>\n"
+            f"reason=<code>{info.get('reason')}</code>"
         )
-        chart = generate_chart(symbol=symbol, signal_info=info)
-        if chart: send_chart(chart, f"📊 {label} Alert: {final_signal}")
+        return
 
+    result = open_trade(symbol, final_signal, sl, tp, cfg)
+    if result:
+        _stats[symbol]["trades"] += 1
+        notify_trade_open(
+            symbol=symbol,
+            side=final_signal,
+            entry=entry,
+            sl=sl,
+            tp=tp,
+            reason=(
+                f"mode={strategy_mode} "
+                f"strategy={info.get('strategy')} "
+                f"bias={info.get('bias')} "
+                f"rr={info.get('rr')}"
+            ),
+        )
 
 # ── Main ─────────────────────────────────────────────────────
 
