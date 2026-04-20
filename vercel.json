@@ -5,10 +5,5 @@
     "api/webhook/telegram.py": { "maxDuration": 10 },
     "api/admin/status.py":     { "maxDuration": 5  }
   },
-  "crons": [
-    {
-      "path":     "/api/cron/tick",
-      "schedule": "* * * * *"
-    }
-  ]
+  "crons": []
 }
