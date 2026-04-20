@@ -3,6 +3,7 @@ import threading
 from datetime import datetime, timezone
 from config import SYMBOLS
 
+
 _lock = threading.Lock()
 
 DEFAULT_MODE = "auto"
@@ -19,17 +20,21 @@ _state = {
     },
 }
 
+
 def is_trading_enabled():
     with _lock:
         return _state["trading_enabled"]
+
 
 def is_bot_running():
     with _lock:
         return _state["bot_running"]
 
+
 def get_status():
     with _lock:
         return dict(_state)
+
 
 def enable_trading(by="user"):
     with _lock:
@@ -38,12 +43,14 @@ def enable_trading(by="user"):
         _state["toggled_by"] = by
         print(f"[Ctrl] ✅ Trading ENABLED by {by}")
 
+
 def disable_trading(reason="", by="user"):
     with _lock:
         _state["trading_enabled"] = False
         _state["toggled_at"] = datetime.now(timezone.utc)
         _state["toggled_by"] = by
         print(f"[Ctrl] ⏸ Trading DISABLED by {by}: {reason}")
+
 
 def stop_bot(by="user"):
     with _lock:
@@ -52,9 +59,11 @@ def stop_bot(by="user"):
         _state["toggled_by"] = by
         print(f"[Ctrl] STOP by {by}")
 
+
 def is_symbol_enabled(symbol):
     with _lock:
         return _state["symbols"].get(symbol, False)
+
 
 def enable_symbol(symbol, by="user"):
     with _lock:
@@ -64,6 +73,7 @@ def enable_symbol(symbol, by="user"):
         print(f"[Ctrl] ✅ {symbol} ENABLED by {by}")
         return True
 
+
 def disable_symbol(symbol, reason="", by="user"):
     with _lock:
         if symbol not in _state["symbols"]:
@@ -72,9 +82,11 @@ def disable_symbol(symbol, reason="", by="user"):
         print(f"[Ctrl] ⏸ {symbol} DISABLED by {by}: {reason}")
         return True
 
+
 def should_trade(symbol):
     with _lock:
         return _state["trading_enabled"] and _state["symbols"].get(symbol, False)
+
 
 def set_strategy_mode(symbol, mode, by="user"):
     mode = (mode or "").lower().strip()
@@ -87,9 +99,11 @@ def set_strategy_mode(symbol, mode, by="user"):
         print(f"[Ctrl] 🎯 {symbol} strategy mode = {mode} by {by}")
         return True, mode
 
+
 def get_strategy_mode(symbol):
     with _lock:
         return _state["strategy_modes"].get(symbol, DEFAULT_MODE)
+
 
 def get_all_strategy_modes():
     with _lock:
