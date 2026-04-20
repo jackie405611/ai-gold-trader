@@ -3,6 +3,12 @@
 #  คำสั่งใหม่: /enable SYMBOL, /disable SYMBOL, /symbols
 # ============================================================
 import threading, requests, time
+import MetaTrader5 as mt5
+import bot_controller as ctrl
+
+from config import SYMBOLS
+from data_fetcher import get_candles
+from ai_strategy import analyze_signal
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, SYMBOLS
 import bot_controller as ctrl
 
