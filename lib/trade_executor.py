@@ -2,6 +2,9 @@
 #  lib/trade_executor.py  —  Trade execution (Vercel)
 #  TRADE_MODE=SIGNAL_ONLY  → Telegram alert, manual execution
 #  TRADE_MODE=META_API     → Cloud MT5 via MetaAPI REST
+#
+#  SL / TP come from ai_strategy (structure-based).
+#  Falls back to ATR-based if strategy did not provide them.
 # ============================================================
 import os
 import requests
@@ -13,31 +16,37 @@ import lib.telegram_notify as tg
 
 TRADE_MODE = os.environ.get("TRADE_MODE", "SIGNAL_ONLY")
 
-# MetaAPI base URL (London region — change if your broker uses a different region)
 _META_BASE = "https://mt-client-api-v1.london.agiliumtrade.ai"
 
 
 # ── Public API ────────────────────────────────────────────────
 
 def open_trade(symbol: str, cfg: dict, signal: str,
-               atr: float, ask: float, bid: float) -> dict | None:
+               atr: float, ask: float, bid: float,
+               sl: float = 0.0, tp: float = 0.0) -> dict | None:
     """
     Open a trade or send a signal alert.
+    sl / tp: pre-calculated by ai_strategy (structure-based).
+             Falls back to ATR-based if not provided (0.0).
     Returns position dict on success, None on failure/signal-only.
     """
     lot    = calculate_lot(atr, symbol, cfg)
     digits = SYMBOL_MAP[symbol]["digits"]
-    sl_dist = round(atr * cfg.get("atr_sl_mult", 1.5), digits)
-    tp_dist = round(atr * cfg.get("atr_tp_mult", 2.5), digits)
+    price  = ask if signal == "BUY" else bid
 
-    if signal == "BUY":
-        price = ask
-        sl    = round(price - sl_dist, digits)
-        tp    = round(price + tp_dist, digits)
+    # Use structure-based SL/TP if provided, else ATR-based fallback
+    if sl == 0.0 or tp == 0.0:
+        sl_dist = round(atr * cfg.get("atr_sl_mult", 1.5), digits)
+        tp_dist = round(atr * cfg.get("atr_tp_mult", 2.5), digits)
+        if signal == "BUY":
+            sl = round(price - sl_dist, digits)
+            tp = round(price + tp_dist, digits)
+        else:
+            sl = round(price + sl_dist, digits)
+            tp = round(price - tp_dist, digits)
     else:
-        price = bid
-        sl    = round(price + sl_dist, digits)
-        tp    = round(price - tp_dist, digits)
+        sl = round(sl, digits)
+        tp = round(tp, digits)
 
     if TRADE_MODE == "META_API":
         return _execute_metaapi(symbol, signal, price, sl, tp, lot)
@@ -46,7 +55,6 @@ def open_trade(symbol: str, cfg: dict, signal: str,
 
 
 def close_position(symbol: str, comment: str = "manual_close") -> None:
-    """Close an open position or advise user to do so manually."""
     if TRADE_MODE == "META_API":
         _close_metaapi(symbol)
     else:
@@ -91,7 +99,7 @@ def _account_id() -> str:
     return os.environ.get("META_API_ACCOUNT_ID", "")
 
 def _execute_metaapi(symbol, signal, price, sl, tp, lot) -> dict | None:
-    action = "ORDER_TYPE_BUY" if signal == "BUY" else "ORDER_TYPE_SELL"
+    action  = "ORDER_TYPE_BUY" if signal == "BUY" else "ORDER_TYPE_SELL"
     payload = {
         "actionType": action,
         "symbol":     symbol,
@@ -100,7 +108,7 @@ def _execute_metaapi(symbol, signal, price, sl, tp, lot) -> dict | None:
         "takeProfit": tp,
     }
     try:
-        resp = requests.post(
+        resp   = requests.post(
             f"{_META_BASE}/users/current/accounts/{_account_id()}/trade",
             json=payload,
             headers=_meta_headers(),
@@ -121,7 +129,7 @@ def _execute_metaapi(symbol, signal, price, sl, tp, lot) -> dict | None:
             return position
         else:
             print(f"[MetaAPI] ❌ {result}")
-            tg.send(f"❌ MetaAPI order failed for <code>{symbol}</code>\n{result}")
+            tg.send(f"❌ MetaAPI order failed <code>{symbol}</code>\n{result}")
             return None
     except Exception as e:
         print(f"[MetaAPI] ❌ {e}")
@@ -131,13 +139,7 @@ def _close_metaapi(symbol: str) -> None:
     pos = store.get_open_position(symbol)
     if not pos:
         return
-    # Close by sending opposite order at market (simplified)
-    signal  = "SELL" if pos.get("signal") == "BUY" else "BUY"
-    action  = "ORDER_TYPE_SELL" if signal == "SELL" else "ORDER_TYPE_BUY"
-    payload = {
-        "actionType": "POSITION_CLOSE_SYMBOL",
-        "symbol":     symbol,
-    }
+    payload = {"actionType": "POSITION_CLOSE_SYMBOL", "symbol": symbol}
     try:
         requests.post(
             f"{_META_BASE}/users/current/accounts/{_account_id()}/trade",

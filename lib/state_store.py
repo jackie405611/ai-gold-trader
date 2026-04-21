@@ -157,10 +157,34 @@ def increment_invocation() -> int:
     return _r().incr("cron:invocation_count")
 
 
-# ── M5 candle cache ───────────────────────────────────────────
+# ── Symbol strategy mode ──────────────────────────────────────
+# Allows user to force a specific entry type via /setmode command.
+# Values: "auto" | "pullback" | "pullback_sell" | "breakout" | "range"
 
+_VALID_MODES = {"auto", "pullback", "pullback_sell", "breakout", "range"}
+
+def get_symbol_mode(symbol: str) -> str:
+    val = _r().get(f"symbol:{symbol}:mode")
+    return val if val in _VALID_MODES else "auto"
+
+def set_symbol_mode(symbol: str, mode: str) -> bool:
+    if mode not in _VALID_MODES:
+        return False
+    _r().set(f"symbol:{symbol}:mode", mode)
+    return True
+
+
+# ── Candle cache (generic — all timeframes) ───────────────────
+
+def get_cached_candles(symbol: str, timeframe: str) -> str | None:
+    return _r().get(f"market_data:{symbol}:{timeframe}")
+
+def set_cached_candles(symbol: str, timeframe: str, df_json: str, ttl: int = 300) -> None:
+    _r().set(f"market_data:{symbol}:{timeframe}", df_json, ex=ttl)
+
+# Backward-compatible aliases
 def get_cached_m5(symbol: str) -> str | None:
-    return _r().get(f"market_data:{symbol}:M5")
+    return get_cached_candles(symbol, "M5")
 
 def set_cached_m5(symbol: str, df_json: str) -> None:
-    _r().set(f"market_data:{symbol}:M5", df_json, ex=300)  # 5-minute TTL
+    set_cached_candles(symbol, "M5", df_json, ttl=300)

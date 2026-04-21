@@ -1,48 +1,34 @@
 # ============================================================
-#  lib/ai_m5.py  —  M5 Trend Engine (V3)
+#  lib/ai_m5.py  —  H4 Trend Structure (legacy shim)
+#  Logic moved to ai_strategy._h4_structure().
+#  This module is kept for backward compatibility only.
 # ============================================================
 try:
-    from lib.config import CONFIRM_BARS
-    from lib.indicators import ema, adx as calc_adx
+    from lib.indicators import ema, market_structure
 except ImportError:
-    from config import CONFIRM_BARS
-    from indicators import ema, adx as calc_adx
+    from indicators import ema, market_structure
 
 
-def trend_signal(df):
+def trend_signal(df_h4) -> str:
     """
-    ส่งคืน: "BUY" | "SELL" | "NONE"
-    เงื่อนไข BUY  : EMA20 > EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20 + +DI > -DI
-    เงื่อนไข SELL : EMA20 < EMA50 (ยืนยัน CONFIRM_BARS แท่ง) + ADX > 20 + -DI > +DI
+    Returns "BUY" | "SELL" | "NONE"
+    Wrapper around H4 structure — used by legacy code paths.
     """
-    close = df["close"]
-    ema20 = ema(close, 20)
-    ema50 = ema(close, 50)
+    close  = df_h4["close"]
+    ema50  = ema(close, 50)
+    ema200 = ema(close, 200)
+    last_c  = float(close.iloc[-1])
+    last_e50  = float(ema50.iloc[-1])
+    last_e200 = float(ema200.iloc[-1])
 
-    adx_s, plus_di, minus_di = calc_adx(df)
+    structure = market_structure(df_h4, lookback=40)
 
-    last_adx     = adx_s.iloc[-1]
-    trend_strong = last_adx > 20
-
-    bullish_bars = sum(
-        ema20.iloc[-i] > ema50.iloc[-i]
-        for i in range(1, CONFIRM_BARS + 1)
-    )
-    bearish_bars = sum(
-        ema20.iloc[-i] < ema50.iloc[-i]
-        for i in range(1, CONFIRM_BARS + 1)
-    )
-
-    if bullish_bars == CONFIRM_BARS and trend_strong and plus_di.iloc[-1] > minus_di.iloc[-1]:
+    if structure == "UPTREND" and last_c > last_e50:
         return "BUY"
-
-    if bearish_bars == CONFIRM_BARS and trend_strong and minus_di.iloc[-1] > plus_di.iloc[-1]:
+    elif structure == "DOWNTREND" and last_c < last_e50:
         return "SELL"
-
     return "NONE"
 
 
-def get_trend_strength(df):
-    """คืน ADX value เพื่อแสดงในรายงาน"""
-    adx_s, _, _ = calc_adx(df)
-    return round(adx_s.iloc[-1], 2)
+def get_trend_strength(df_h4) -> str:
+    return market_structure(df_h4, lookback=40)
