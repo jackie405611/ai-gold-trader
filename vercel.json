@@ -1,7 +1,7 @@
 {
   "framework": null,
   "functions": {
-    "api/cron/tick.py":        { "maxDuration": 55 },
+    "api/cron/tick.py":        { "maxDuration": 120 },
     "api/webhook/telegram.py": { "maxDuration": 10 },
     "api/admin/status.py":     { "maxDuration": 5  }
   },
