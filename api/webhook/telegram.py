@@ -31,8 +31,28 @@ import lib.state_store as store
 import lib.telegram_notify as tg
 from lib.trade_executor import close_all, close_position
 
-_VALID_TF   = {"M15", "H1", "H4", "M5"}
+_VALID_TF    = {"M15", "H1", "H4", "M5"}
 _VALID_MODES = {"auto", "pullback", "pullback_sell", "breakout", "range"}
+
+
+def _resolve_symbol(raw: str) -> str | None:
+    """
+    Match user input to a SYMBOLS key.
+    Tries in order: exact → case-insensitive → label (e.g. "GOLD").
+    Returns the correct key or None if not found.
+    """
+    if not raw:
+        return None
+    if raw in SYMBOLS:
+        return raw
+    raw_up = raw.upper()
+    for key in SYMBOLS:
+        if key.upper() == raw_up:
+            return key
+    for key, cfg in SYMBOLS.items():
+        if cfg.get("label", "").upper() == raw_up:
+            return key
+    return None
 
 
 def _send(text: str):
@@ -120,23 +140,32 @@ def _cmd_enable(arg: str, username: str):
     if not arg:
         _send("❓ ระบุ symbol: <code>/enable XAUUSDm</code>")
         return
-    ok = store.enable_symbol(arg, by=username)
-    _send(f"✅ <b>{arg}</b> — เปิด auto trade แล้ว" if ok
-          else f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
+    sym = _resolve_symbol(arg)
+    if sym is None:
+        _send(f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
+        return
+    store.enable_symbol(sym, by=username)
+    _send(f"✅ <b>{sym}</b> — เปิด auto trade แล้ว")
 
 
 def _cmd_disable(arg: str, username: str):
     if not arg:
         _send("❓ ระบุ symbol: <code>/disable XAUUSDm</code>")
         return
-    ok = store.disable_symbol(arg, reason="Disabled by user", by=username)
-    _send(f"⏸ <b>{arg}</b> — ปิด auto trade แล้ว" if ok
-          else f"❌ ไม่พบ symbol <code>{arg}</code>")
+    sym = _resolve_symbol(arg)
+    if sym is None:
+        _send(f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
+        return
+    store.disable_symbol(sym, reason="Disabled by user", by=username)
+    _send(f"⏸ <b>{sym}</b> — ปิด auto trade แล้ว")
 
 
 def _cmd_signal(arg: str):
     """Run on-demand signal analysis for a symbol."""
-    sym = arg if arg in SYMBOLS else list(SYMBOLS.keys())[0]
+    sym = _resolve_symbol(arg) if arg else list(SYMBOLS.keys())[0]
+    if sym is None:
+        _send(f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
+        return
     cfg = SYMBOLS[sym]
 
     _send(f"🔍 กำลังวิเคราะห์ <code>{sym}</code>…")
@@ -220,12 +249,16 @@ def _cmd_positions():
 
 
 def _cmd_close(arg: str):
-    if arg and arg in SYMBOLS:
-        if not store.position_exists(arg):
-            _send(f"ℹ️  <code>{arg}</code> ไม่มี position เปิดอยู่")
+    resolved = _resolve_symbol(arg) if arg else None
+    if arg and resolved is None:
+        _send(f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
+        return
+    if resolved:
+        if not store.position_exists(resolved):
+            _send(f"ℹ️  <code>{resolved}</code> ไม่มี position เปิดอยู่")
             return
-        close_position(arg, comment="manual_close")
-        _send(f"🔒 ส่งคำสั่งปิด position <b>{arg}</b> แล้ว")
+        close_position(resolved, comment="manual_close")
+        _send(f"🔒 ส่งคำสั่งปิด position <b>{resolved}</b> แล้ว")
     else:
         open_syms = [s for s in SYMBOLS if store.position_exists(s)]
         if not open_syms:
@@ -245,17 +278,12 @@ def _cmd_chart(parts: list):
     tf  = "M15"
 
     for part in parts[1:]:
-        p = part.upper()
-        if p in SYMBOLS:
-            sym = p
-        elif p in _VALID_TF:
-            tf = p
+        if part.upper() in _VALID_TF:
+            tf = part.upper()
         else:
-            # Try label match e.g. "GOLD"
-            for s, c in SYMBOLS.items():
-                if c.get("label", "").upper() == p:
-                    sym = s
-                    break
+            resolved = _resolve_symbol(part)
+            if resolved:
+                sym = resolved
 
     _send(f"📈 กำลังสร้างกราฟ <code>{sym} {tf}</code>…")
     df = get_candles(sym, tf, count=120)
@@ -284,11 +312,11 @@ def _cmd_setmode(parts: list, username: str):
         )
         return
 
-    sym  = parts[1].upper()
+    sym = _resolve_symbol(parts[1])
     mode = parts[2].lower()
 
-    if sym not in SYMBOLS:
-        _send(f"❌ ไม่พบ symbol <code>{sym}</code>  ดู /symbols")
+    if sym is None:
+        _send(f"❌ ไม่พบ symbol <code>{parts[1]}</code>  ดู /symbols")
         return
 
     ok = store.set_symbol_mode(sym, mode)
@@ -313,9 +341,9 @@ def _cmd_mode(arg: str):
     if not arg:
         _send("❓ ระบุ symbol: <code>/mode XAUUSDm</code>")
         return
-    sym = arg.upper()
-    if sym not in SYMBOLS:
-        _send(f"❌ ไม่พบ symbol <code>{sym}</code>")
+    sym = _resolve_symbol(arg)
+    if sym is None:
+        _send(f"❌ ไม่พบ symbol <code>{arg}</code>  ดู /symbols")
         return
     mode = store.get_symbol_mode(sym)
     _send(f"🎯 <b>{sym}</b> entry mode = <code>{mode}</code>")
@@ -366,7 +394,7 @@ def _cmd_help():
 def _handle(text: str, username: str):
     parts = text.strip().split()
     cmd   = parts[0].lower().split("@")[0]
-    arg   = parts[1].upper() if len(parts) > 1 else ""
+    arg   = parts[1] if len(parts) > 1 else ""
 
     if cmd == "/start":
         _cmd_start(username)
