@@ -7,43 +7,43 @@ import os
 # ── Symbols ที่ต้องการเทรด ────────────────────────────────────
 SYMBOLS = {
     "XAUUSDm": {
-        "enabled":        True,
-        "lot":            0.01,
-        "max_spread":     30,        # points
-        "atr_sl_mult":    1.5,
-        "atr_tp_mult":    2.5,
-        "min_volatility": 0.3,
-        "max_volatility": 8.0,
-        "rsi_oversold":   38,
-        "rsi_overbought": 62,
-        "sessions":       [(7, 12), (13, 17)],  # UTC
-        "label":          "GOLD",
+        "enabled":          True,
+        "lot":              0.01,
+        "max_spread":       30,        # points
+        "atr_sl_mult":      1.5,       # ATR fallback SL (used if strategy SL unavailable)
+        "atr_tp_mult":      2.5,       # ATR fallback TP
+        "min_volatility":   1.0,       # M15 ATR minimum (too quiet = no trade)
+        "max_volatility":   15.0,      # M15 ATR maximum (news spike = no trade)
+        "zone_tolerance":   0.004,     # 0.4% price proximity to zone
+        "min_rr":           1.5,       # minimum R:R required to enter
+        "sessions":         [(7, 12), (13, 17)],  # UTC
+        "label":            "GOLD",
     },
     "EURUSDm": {
-        "enabled":        True,
-        "lot":            0.01,
-        "max_spread":     15,
-        "atr_sl_mult":    1.5,
-        "atr_tp_mult":    2.5,
-        "min_volatility": 0.0003,
-        "max_volatility": 0.005,
-        "rsi_oversold":   38,
-        "rsi_overbought": 62,
-        "sessions":       [(7, 17)],
-        "label":          "EURUSD",
+        "enabled":          True,
+        "lot":              0.01,
+        "max_spread":       15,
+        "atr_sl_mult":      1.5,
+        "atr_tp_mult":      2.5,
+        "min_volatility":   0.0003,
+        "max_volatility":   0.005,
+        "zone_tolerance":   0.003,
+        "min_rr":           1.5,
+        "sessions":         [(7, 17)],
+        "label":            "EURUSD",
     },
     "BTCUSDm": {
-        "enabled":        True,
-        "lot":            0.01,
-        "max_spread":     200,
-        "atr_sl_mult":    1.5,
-        "atr_tp_mult":    2.5,
-        "min_volatility": 20.0,
-        "max_volatility": 2000.0,
-        "rsi_oversold":   38,
-        "rsi_overbought": 62,
-        "sessions":       [(0, 24)],
-        "label":          "BTC",
+        "enabled":          True,
+        "lot":              0.01,
+        "max_spread":       200,
+        "atr_sl_mult":      1.5,
+        "atr_tp_mult":      2.5,
+        "min_volatility":   50.0,
+        "max_volatility":   3000.0,
+        "zone_tolerance":   0.005,
+        "min_rr":           1.5,
+        "sessions":         [(0, 24)],
+        "label":            "BTC",
     },
 }
 

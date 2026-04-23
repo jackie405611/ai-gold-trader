@@ -1,54 +1,45 @@
 # ============================================================
-#  lib/ai_m1.py  —  M1 Entry Engine (V3)
-#  RSI_OVERSOLD / RSI_OVERBOUGHT รับจาก cfg ของแต่ละ symbol
+#  lib/ai_m1.py  —  M15 Entry Confirmation (legacy shim)
+#  Logic moved to ai_strategy._m15_confirmation().
+#  This module is kept for backward compatibility only.
 # ============================================================
-from lib.indicators import rsi as calc_rsi, ema as calc_ema, atr as calc_atr
+try:
+    from lib.indicators import (
+        rsi as calc_rsi, atr as calc_atr,
+        is_pin_bar_bullish, is_pin_bar_bearish,
+        is_bullish_engulfing, is_bearish_engulfing,
+        break_of_structure_bullish, break_of_structure_bearish,
+    )
+except ImportError:
+    from indicators import (
+        rsi as calc_rsi, atr as calc_atr,
+        is_pin_bar_bullish, is_pin_bar_bearish,
+        is_bullish_engulfing, is_bearish_engulfing,
+        break_of_structure_bullish, break_of_structure_bearish,
+    )
 
 
-def _is_bullish_candle(df, idx=-1):
-    return df["close"].iloc[idx] > df["open"].iloc[idx]
-
-
-def _is_bearish_candle(df, idx=-1):
-    return df["close"].iloc[idx] < df["open"].iloc[idx]
-
-
-def entry_signal(df, m5_trend="NONE", cfg=None):
+def entry_signal(df_m15, m5_trend="NONE", cfg=None):
     """
-    ส่งคืน: ("BUY" | "SELL" | "NONE", rsi_value, atr_value)
-    cfg : dict ของ symbol (จาก config.SYMBOLS) ใช้อ่าน rsi_oversold/rsi_overbought
+    Returns ("BUY" | "SELL" | "NONE", rsi_value, atr_value)
+    Checks price action patterns on M15 for entry confirmation.
     """
-    oversold   = (cfg or {}).get("rsi_oversold",  38)
-    overbought = (cfg or {}).get("rsi_overbought", 62)
-
-    close = df["close"]
-    rsi_s  = calc_rsi(close)
-    ema20  = calc_ema(close, 20)
-    atr_v  = calc_atr(df).iloc[-1]
-
-    last_rsi   = rsi_s.iloc[-1]
-    last_close = close.iloc[-1]
-    last_ema20 = ema20.iloc[-1]
+    close   = df_m15["close"]
+    rsi_val = float(calc_rsi(close).iloc[-1])
+    atr_val = float(calc_atr(df_m15).iloc[-1])
 
     signal = "NONE"
 
     if m5_trend == "BUY":
-        if (last_rsi < oversold
-                and last_close > last_ema20
-                and _is_bullish_candle(df)):
+        if is_pin_bar_bullish(df_m15) or is_bullish_engulfing(df_m15):
+            signal = "BUY"
+        elif break_of_structure_bullish(df_m15):
             signal = "BUY"
 
     elif m5_trend == "SELL":
-        if (last_rsi > overbought
-                and last_close < last_ema20
-                and _is_bearish_candle(df)):
+        if is_pin_bar_bearish(df_m15) or is_bearish_engulfing(df_m15):
+            signal = "SELL"
+        elif break_of_structure_bearish(df_m15):
             signal = "SELL"
 
-    else:
-        # ไม่มี M5 context → ใช้ signal อิสระ (conservative)
-        if last_rsi < oversold - 5:
-            signal = "BUY"
-        elif last_rsi > overbought + 5:
-            signal = "SELL"
-
-    return signal, round(last_rsi, 2), round(atr_v, 4)
+    return signal, round(rsi_val, 2), round(atr_val, 4)
