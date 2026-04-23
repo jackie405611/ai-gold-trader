@@ -188,3 +188,78 @@ def get_cached_m5(symbol: str) -> str | None:
 
 def set_cached_m5(symbol: str, df_json: str) -> None:
     set_cached_candles(symbol, "M5", df_json, ttl=300)
+
+
+# ── Signal history log ────────────────────────────────────────
+# Redis sorted set "signals:log"  (score = unix timestamp)
+# Each member is a JSON string matching the signal record schema.
+# Max 500 entries — oldest trimmed automatically on each write.
+
+_SIGNALS_KEY  = "signals:log"
+_SIGNALS_MAX  = 500
+
+
+def log_signal(record: dict) -> None:
+    """Append a signal record to the sorted set. Trims to last 500."""
+    r   = _r()
+    ts  = float(record.get("ts", 0))
+    raw = json.dumps(record, ensure_ascii=False)
+    r.zadd(_SIGNALS_KEY, {raw: ts})
+    # keep only the newest MAX entries
+    r.zremrangebyrank(_SIGNALS_KEY, 0, -(  _SIGNALS_MAX + 1))
+
+
+def get_signal_history(n: int = 100) -> list:
+    """Return the last n signals, newest first."""
+    r    = _r()
+    raws = r.zrange(_SIGNALS_KEY, 0, -1, rev=True)
+    out  = []
+    for raw in (raws or [])[:n]:
+        try:
+            out.append(json.loads(raw) if isinstance(raw, str) else raw)
+        except Exception:
+            pass
+    return out
+
+
+def get_open_sim_signals() -> list:
+    """Return signals that have a SL/TP set but no sim_outcome yet."""
+    all_sigs = get_signal_history(n=_SIGNALS_MAX)
+    return [
+        s for s in all_sigs
+        if s.get("signal") in ("BUY", "SELL")
+        and s.get("sl") and s.get("tp")
+        and s.get("sim_outcome") is None
+    ]
+
+
+def update_sim_outcome(signal_id: str, outcome: str, close_price: float) -> None:
+    """Find a signal by id and update its sim_outcome in place."""
+    r    = _r()
+    raws = r.zrange(_SIGNALS_KEY, 0, -1, withscores=True)
+    for raw, score in (raws or []):
+        try:
+            rec = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            continue
+        if rec.get("id") != signal_id:
+            continue
+        # calculate pnl_r
+        entry = rec.get("entry_price", 0)
+        sl    = rec.get("sl", 0)
+        tp    = rec.get("tp", 0)
+        sl_dist = abs(entry - sl) if entry and sl else 0
+        tp_dist = abs(tp - entry) if tp and entry else 0
+        pnl_r = round(tp_dist / sl_dist, 2) if (outcome == "TP" and sl_dist) \
+                else (-1.0 if outcome == "SL" else 0.0)
+
+        rec["sim_outcome"]     = outcome
+        rec["sim_close_price"] = close_price
+        rec["sim_pnl_r"]       = pnl_r
+
+        new_raw = json.dumps(rec, ensure_ascii=False)
+        pipe = r.pipeline()
+        pipe.zrem(_SIGNALS_KEY, raw)
+        pipe.zadd(_SIGNALS_KEY, {new_raw: score})
+        pipe.execute()
+        return

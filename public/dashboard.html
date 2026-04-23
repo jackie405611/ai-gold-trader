@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gold Trader — Signal Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+    --purple: #bc8cff; --orange: #e3b341;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  #status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  #status-dot.stopped { background: var(--red); }
+  #last-refresh { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+  /* Cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .card .sub   { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .val-green { color: var(--green); }
+  .val-red   { color: var(--red); }
+  .val-blue  { color: var(--blue); }
+  .val-yellow{ color: var(--yellow); }
+
+  /* Two-column layout */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+
+  /* Panels */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .panel-title { padding: 12px 16px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); color: var(--muted); letter-spacing: .4px; }
+
+  /* Table */
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 8px 12px; color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 7px 12px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1c2128; }
+
+  /* Badges */
+  .badge { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600; }
+  .badge-buy    { background: #1a3a2a; color: var(--green); }
+  .badge-sell   { background: #3a1a1a; color: var(--red); }
+  .badge-none   { background: #1c2128; color: var(--muted); }
+  .badge-tp     { background: #1a3a2a; color: var(--green); }
+  .badge-sl     { background: #3a1a1a; color: var(--red); }
+  .badge-open   { background: #1e2a3a; color: var(--blue); }
+
+  /* Bar chart */
+  .chart-area { padding: 16px; }
+  canvas { width: 100%; }
+
+  /* Entry type mini-table */
+  .mini-table { padding: 0 0 4px; }
+  .mini-row { display: flex; align-items: center; padding: 7px 16px; border-bottom: 1px solid #21262d; gap: 8px; }
+  .mini-row:last-child { border-bottom: none; }
+  .mini-label { flex: 1; font-size: 12px; }
+  .mini-bar-wrap { flex: 2; background: #21262d; border-radius: 3px; height: 6px; }
+  .mini-bar { height: 6px; border-radius: 3px; background: var(--blue); }
+  .mini-stat { font-size: 11px; color: var(--muted); width: 90px; text-align: right; }
+
+  #error-banner { display: none; background: #3a1a1a; border: 1px solid var(--red); border-radius: 6px;
+                   padding: 10px 16px; margin-bottom: 16px; color: var(--red); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="status-dot"></div>
+  <h1>Gold Trader — Signal Dashboard</h1>
+  <span id="status-label" style="color:var(--muted);font-size:13px;">Loading…</span>
+  <span id="last-refresh"></span>
+</header>
+
+<main>
+  <div id="error-banner"></div>
+
+  <div class="cards" id="cards">
+    <div class="card"><div class="label">Total Signals</div><div class="value" id="c-total">—</div></div>
+    <div class="card"><div class="label">BUY / SELL</div><div class="value" id="c-bs">—</div></div>
+    <div class="card"><div class="label">Win Rate</div><div class="value val-green" id="c-wr">—</div></div>
+    <div class="card"><div class="label">Avg R:R</div><div class="value val-blue" id="c-rr">—</div></div>
+    <div class="card"><div class="label">Balance</div><div class="value val-yellow" id="c-bal">—</div><div class="sub" id="c-eq">Equity —</div></div>
+    <div class="card"><div class="label">Sim Open</div><div class="value" id="c-open">—</div><div class="sub" id="c-closed">Closed —</div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="panel-title">RECENT SIGNALS (last 100)</div>
+      <div class="tbl-wrap">
+        <table id="sig-table">
+          <thead><tr>
+            <th>Time</th><th>Symbol</th><th>Signal</th><th>Entry Type</th>
+            <th>H4</th><th>Confluence</th><th>R:R</th><th>Outcome</th>
+          </tr></thead>
+          <tbody id="sig-body"><tr><td colspan="8" style="color:var(--muted);padding:20px">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="panel">
+        <div class="panel-title">BY ENTRY TYPE</div>
+        <div id="entry-chart" class="mini-table"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">BY H4 STRUCTURE</div>
+        <div id="h4-chart" class="mini-table"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const TOKEN = localStorage.getItem('cron_secret') || prompt('Enter CRON_SECRET token:');
+if (TOKEN) localStorage.setItem('cron_secret', TOKEN);
+
+function fmt(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString('en-GB', {day:'2-digit',month:'short'}) + ' ' +
+         d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+}
+
+function badge(cls, text) {
+  return `<span class="badge badge-${cls}">${text}</span>`;
+}
+
+function signalBadge(s) {
+  if (s === 'BUY')  return badge('buy', 'BUY');
+  if (s === 'SELL') return badge('sell', 'SELL');
+  return badge('none', 'NO TRADE');
+}
+
+function outcomeBadge(o) {
+  if (o === 'TP')   return badge('tp', '✓ TP');
+  if (o === 'SL')   return badge('sl', '✗ SL');
+  if (o === null)   return badge('open', '⋯ Open');
+  return badge('none', o || '—');
+}
+
+function miniChart(containerId, data) {
+  const el = document.getElementById(containerId);
+  if (!data || !Object.keys(data).length) { el.innerHTML = '<div class="mini-row" style="color:var(--muted)">No data</div>'; return; }
+  const entries = Object.entries(data).sort((a,b) => b[1].total - a[1].total);
+  const maxTotal = Math.max(...entries.map(e => e[1].total), 1);
+  el.innerHTML = entries.map(([label, d]) => {
+    const wins   = d.wins   || 0;
+    const losses = d.losses || 0;
+    const total  = d.total  || 0;
+    const closed = wins + losses;
+    const wr     = closed ? (wins/closed*100).toFixed(0) : '—';
+    const pct    = (total / maxTotal * 100).toFixed(0);
+    return `<div class="mini-row">
+      <span class="mini-label">${label}</span>
+      <div class="mini-bar-wrap"><div class="mini-bar" style="width:${pct}%"></div></div>
+      <span class="mini-stat">${total} trades &nbsp; WR ${wr}%</span>
+    </div>`;
+  }).join('');
+}
+
+async function load() {
+  try {
+    const [sigRes, stRes] = await Promise.all([
+      fetch('/api/admin/signals', {headers: {Authorization: `Bearer ${TOKEN}`}}),
+      fetch('/api/admin/status',  {headers: {Authorization: `Bearer ${TOKEN}`}})
+    ]);
+
+    if (!sigRes.ok) throw new Error(`signals ${sigRes.status}`);
+    const { signals, stats } = await sigRes.json();
+
+    // Status header
+    if (stRes.ok) {
+      const st = await stRes.json();
+      const dot   = document.getElementById('status-dot');
+      const label = document.getElementById('status-label');
+      const running = st.running ?? st.bot?.running;
+      dot.className   = running ? 'running' : 'stopped';
+      label.textContent = running ? 'Running' : 'Stopped';
+      document.getElementById('c-bal').textContent = st.balance != null ? `$${Number(st.balance).toLocaleString()}` : '—';
+      document.getElementById('c-eq').textContent  = `Equity ${st.equity != null ? '$'+Number(st.equity).toLocaleString() : '—'}`;
+    }
+
+    // Cards
+    document.getElementById('c-total').textContent = stats.total ?? '—';
+    document.getElementById('c-bs').innerHTML =
+      `<span style="color:var(--green)">${stats.buy_count}</span> / <span style="color:var(--red)">${stats.sell_count}</span>`;
+    const wr = stats.win_rate_pct;
+    const wrEl = document.getElementById('c-wr');
+    wrEl.textContent = wr != null ? `${wr}%` : '—';
+    wrEl.className = `value ${wr >= 60 ? 'val-green' : wr >= 45 ? 'val-yellow' : 'val-red'}`;
+    document.getElementById('c-rr').textContent  = stats.avg_rr != null ? stats.avg_rr : '—';
+    document.getElementById('c-open').textContent   = stats.sim_open ?? '—';
+    document.getElementById('c-closed').textContent = `Closed ${(stats.sim_wins??0) + (stats.sim_losses??0)}`;
+
+    // Signals table
+    const tbody = document.getElementById('sig-body');
+    if (!signals || !signals.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="color:var(--muted);padding:20px">No signals yet</td></tr>';
+    } else {
+      tbody.innerHTML = signals.map(s => `<tr>
+        <td style="color:var(--muted)">${fmt(s.ts)}</td>
+        <td>${s.symbol || '—'}</td>
+        <td>${signalBadge(s.signal)}</td>
+        <td>${s.entry_type || '—'}</td>
+        <td><small>${s.h4_structure || '—'}</small></td>
+        <td><small style="color:var(--muted)">${(s.confluence||[]).slice(0,2).join(', ') || '—'}</small></td>
+        <td>${s.rr != null ? s.rr.toFixed(1) : '—'}</td>
+        <td>${outcomeBadge(s.sim_outcome)}</td>
+      </tr>`).join('');
+    }
+
+    // Mini charts
+    miniChart('entry-chart', stats.by_entry_type);
+    miniChart('h4-chart', stats.by_h4_structure);
+
+    document.getElementById('last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    document.getElementById('error-banner').style.display = 'none';
+  } catch (err) {
+    const b = document.getElementById('error-banner');
+    b.style.display = 'block';
+    b.textContent = `Failed to load: ${err.message}`;
+  }
+}
+
+load();
+setInterval(load, 60_000);
+</script>
+</body>
+</html>

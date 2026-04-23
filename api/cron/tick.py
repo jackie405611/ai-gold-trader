@@ -64,6 +64,8 @@ class handler(BaseHTTPRequestHandler):
             tg.notify_risk_event("Drawdown / daily loss / consecutive losses limit reached.")
             return
 
+        self._check_sim_outcomes()
+
         for symbol, cfg in SYMBOLS.items():
             try:
                 self._process_symbol(symbol, cfg)
@@ -82,6 +84,33 @@ class handler(BaseHTTPRequestHandler):
                 f"💔 DailyL  : <code>{rs.get('daily_loss_pct', '?')}%</code>\n"
                 f"🔁 Streak  : <code>{rs.get('consec_losses', '?')}</code>"
             )
+
+    def _check_sim_outcomes(self):
+        """Check open sim signals; update outcome when price crosses SL/TP."""
+        for sim in store.get_open_sim_signals():
+            symbol = sim.get("symbol", "")
+            if not symbol:
+                continue
+            try:
+                ask, bid = get_latest_price(symbol)
+                if ask == 0:
+                    continue
+                sig = sim.get("signal")
+                sl  = sim.get("sl", 0)
+                tp  = sim.get("tp", 0)
+                sid = sim.get("id", "")
+                if sig == "BUY":
+                    if sl and bid <= sl:
+                        store.update_sim_outcome(sid, "SL", bid)
+                    elif tp and ask >= tp:
+                        store.update_sim_outcome(sid, "TP", ask)
+                elif sig == "SELL":
+                    if sl and ask >= sl:
+                        store.update_sim_outcome(sid, "SL", ask)
+                    elif tp and bid <= tp:
+                        store.update_sim_outcome(sid, "TP", bid)
+            except Exception:
+                traceback.print_exc()
 
     def _process_symbol(self, symbol: str, cfg: dict):
         print(f"\n[Tick] ── {symbol} ──")
@@ -112,6 +141,33 @@ class handler(BaseHTTPRequestHandler):
         # Generate 5-layer signal
         signal, info = generate_signal(df_h4, df_h1, df_m15, cfg, ask=ask, bid=bid)
         print(f"[Tick:{symbol}] Signal={signal}  info={info}")
+
+        now_ts = datetime.now(timezone.utc).timestamp()
+        sig_record = {
+            "id":              f"{symbol}-{int(now_ts)}",
+            "ts":              now_ts,
+            "symbol":          symbol,
+            "signal":          signal,
+            "entry_type":      info.get("entry_type", ""),
+            "h4_structure":    info.get("h4_structure", ""),
+            "h4_ema_bias":     info.get("h4_ema_bias", ""),
+            "confluence":      info.get("confluence", []),
+            "confluence_count":info.get("confluence_count", 0),
+            "m15_signals":     info.get("m15_signals", []),
+            "m15_rsi":         info.get("m15_rsi", None),
+            "sl":              info.get("sl", None),
+            "tp":              info.get("tp", None),
+            "rr":              info.get("rr", None),
+            "atr_m15":         atr,
+            "entry_price":     ask if signal == "BUY" else bid,
+            "reason":          info.get("reason", ""),
+            "sim_outcome":     None,
+            "sim_close_price": None,
+            "sim_pnl_r":       None,
+        }
+        # Log every signal that has H4 data (BUY/SELL always; NO TRADE only when structure known)
+        if signal in ("BUY", "SELL") or info.get("h4_structure"):
+            store.log_signal(sig_record)
 
         if signal in ("BUY", "SELL"):
             sl = info.get("sl", 0.0)
