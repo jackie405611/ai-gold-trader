@@ -2,10 +2,7 @@
 #  lib/ai_m1.py  —  M1 Entry Engine (V3)
 #  RSI_OVERSOLD / RSI_OVERBOUGHT รับจาก cfg ของแต่ละ symbol
 # ============================================================
-try:
-    from lib.indicators import rsi as calc_rsi, ema as calc_ema, atr as calc_atr
-except ImportError:
-    from indicators import rsi as calc_rsi, ema as calc_ema, atr as calc_atr
+from lib.indicators import rsi as calc_rsi, ema as calc_ema, atr as calc_atr
 
 
 def _is_bullish_candle(df, idx=-1):

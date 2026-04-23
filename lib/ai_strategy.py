@@ -6,16 +6,10 @@
 #    RANGING   → Strategy 2: MACD crossover + RSI extremes (via ai_macd_rsi)
 #    VOLATILE  → NO TRADE
 # ============================================================
-try:
-    from lib.ai_macd_rsi import macd_rsi_signal
-    from lib.ai_m5 import trend_signal
-    from lib.ai_m1 import entry_signal
-    from lib.indicators import atr as calc_atr, bollinger_width, adx as calc_adx
-except ImportError:
-    from ai_macd_rsi import macd_rsi_signal
-    from ai_m5 import trend_signal
-    from ai_m1 import entry_signal
-    from indicators import atr as calc_atr, bollinger_width, adx as calc_adx
+from lib.ai_macd_rsi import macd_rsi_signal
+from lib.ai_m5 import trend_signal
+from lib.ai_m1 import entry_signal
+from lib.indicators import atr as calc_atr, bollinger_width, adx as calc_adx
 
 
 # ── Market Regime Detection ───────────────────────────────────

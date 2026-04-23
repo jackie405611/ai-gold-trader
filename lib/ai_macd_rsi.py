@@ -16,10 +16,7 @@
 #    - SELL : M1 RSI กำลังพลิกตัวลงจาก overbought (RSI เริ่มลดลง)
 # ============================================================
 import pandas as pd
-try:
-    from lib.indicators import ema, rsi as calc_rsi
-except ImportError:
-    from indicators import ema, rsi as calc_rsi
+from lib.indicators import ema, rsi as calc_rsi
 
 
 def _macd(s: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):

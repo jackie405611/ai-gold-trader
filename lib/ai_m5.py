@@ -1,12 +1,8 @@
 # ============================================================
 #  lib/ai_m5.py  —  M5 Trend Engine (V3)
 # ============================================================
-try:
-    from lib.config import CONFIRM_BARS
-    from lib.indicators import ema, adx as calc_adx
-except ImportError:
-    from config import CONFIRM_BARS
-    from indicators import ema, adx as calc_adx
+from lib.config import CONFIRM_BARS
+from lib.indicators import ema, adx as calc_adx
 
 
 def trend_signal(df):
