@@ -198,7 +198,7 @@ def _m5_entry_timing(df_m5, direction: str) -> tuple:
     Returns (confirmed, info_dict)
     Precise entry timing on M5 — runs after M15 setup is confirmed.
     Requires at least 1 price action pattern; RSI used as support only.
-    Stricter RSI threshold than M15 (< 45 / > 55) to filter noise.
+    Stricter RSI threshold than M15 (< 35 / > 65) to filter noise.
     """
     signals = []
     rsi_val = float(rsi(df_m5["close"]).iloc[-1])
@@ -212,7 +212,7 @@ def _m5_entry_timing(df_m5, direction: str) -> tuple:
             signals.append("m5_morning_star")
         if break_of_structure_bullish(df_m5, lookback=15):
             signals.append("m5_bos")
-        if rsi_val < 45:
+        if rsi_val < 35:
             signals.append("m5_rsi_ok")
     else:  # SELL
         if is_pin_bar_bearish(df_m5):
@@ -221,7 +221,7 @@ def _m5_entry_timing(df_m5, direction: str) -> tuple:
             signals.append("m5_engulfing_bear")
         if break_of_structure_bearish(df_m5, lookback=15):
             signals.append("m5_bos_bear")
-        if rsi_val > 55:
+        if rsi_val > 65:
             signals.append("m5_rsi_ok")
 
     pa_signals = [s for s in signals if "rsi" not in s]
