@@ -6,6 +6,7 @@
 #    H4  (100 bars) — big picture structure  [cached 4h]
 #    H1  (100 bars) — zone finding            [cached 1h]
 #    M15 (100 bars) — entry confirmation      [cached 15m]
+#    M5  (100 bars) — precise entry timing    [cached 5m]
 # ============================================================
 import os, traceback
 from http.server import BaseHTTPRequestHandler
@@ -127,19 +128,22 @@ class handler(BaseHTTPRequestHandler):
         if position_exists(symbol):
             return
 
-        # Fetch multi-timeframe candles (H4 + H1 + M15)
+        # Fetch multi-timeframe candles (H4 + H1 + M15 + M5)
         df_h4  = get_candles(symbol, "H4",  count=100)
         df_h1  = get_candles(symbol, "H1",  count=100)
         df_m15 = get_candles(symbol, "M15", count=100)
+        df_m5  = get_candles(symbol, "M5",  count=100)
 
         if df_h4 is None or df_h1 is None or df_m15 is None:
-            print(f"[Tick:{symbol}] ❌ Missing candle data")
+            print(f"[Tick:{symbol}] ❌ Missing candle data (H4/H1/M15)")
             return
+        if df_m5 is None:
+            print(f"[Tick:{symbol}] ⚠️ M5 data unavailable — M5 layer skipped")
 
         atr = get_latest_atr(symbol, "M15")
 
-        # Generate 5-layer signal
-        signal, info = generate_signal(df_h4, df_h1, df_m15, cfg, ask=ask, bid=bid)
+        # Generate 6-layer signal (H4→H1→M15→M5→SL→R:R)
+        signal, info = generate_signal(df_h4, df_h1, df_m15, df_m5, cfg, ask=ask, bid=bid)
         print(f"[Tick:{symbol}] Signal={signal}  info={info}")
 
         now_ts = datetime.now(timezone.utc).timestamp()
@@ -155,6 +159,8 @@ class handler(BaseHTTPRequestHandler):
             "confluence_count":info.get("confluence_count", 0),
             "m15_signals":     info.get("m15_signals", []),
             "m15_rsi":         info.get("m15_rsi", None),
+            "m5_signals":      info.get("m5_signals", []),
+            "m5_rsi":          info.get("m5_rsi", None),
             "sl":              info.get("sl", None),
             "tp":              info.get("tp", None),
             "rr":              info.get("rr", None),

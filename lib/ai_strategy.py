@@ -191,6 +191,48 @@ def _m15_confirmation(df_m15, direction: str) -> tuple:
     }
 
 
+# ── Layer 3b: M5 Entry Timing ─────────────────────────────────
+
+def _m5_entry_timing(df_m5, direction: str) -> tuple:
+    """
+    Returns (confirmed, info_dict)
+    Precise entry timing on M5 — runs after M15 setup is confirmed.
+    Requires at least 1 price action pattern; RSI used as support only.
+    Stricter RSI threshold than M15 (< 45 / > 55) to filter noise.
+    """
+    signals = []
+    rsi_val = float(rsi(df_m5["close"]).iloc[-1])
+
+    if direction == "BUY":
+        if is_pin_bar_bullish(df_m5):
+            signals.append("m5_pin_bar")
+        if is_bullish_engulfing(df_m5):
+            signals.append("m5_engulfing")
+        if is_morning_star(df_m5):
+            signals.append("m5_morning_star")
+        if break_of_structure_bullish(df_m5, lookback=15):
+            signals.append("m5_bos")
+        if rsi_val < 45:
+            signals.append("m5_rsi_ok")
+    else:  # SELL
+        if is_pin_bar_bearish(df_m5):
+            signals.append("m5_pin_bar_bear")
+        if is_bearish_engulfing(df_m5):
+            signals.append("m5_engulfing_bear")
+        if break_of_structure_bearish(df_m5, lookback=15):
+            signals.append("m5_bos_bear")
+        if rsi_val > 55:
+            signals.append("m5_rsi_ok")
+
+    pa_signals = [s for s in signals if "rsi" not in s]
+    confirmed  = len(pa_signals) >= 1
+
+    return confirmed, {
+        "m5_signals": signals,
+        "m5_rsi":     round(rsi_val, 1),
+    }
+
+
 # ── Layer 4+5: SL / TP / R:R ──────────────────────────────────
 
 def _sl_tp_rr(df_m15, df_h1, direction: str, entry: float) -> tuple:
@@ -240,8 +282,8 @@ def _sl_tp_rr(df_m15, df_h1, direction: str, entry: float) -> tuple:
 
 # ── Entry Strategies ──────────────────────────────────────────
 
-def _pullback_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
-    """H4 uptrend + H1 pulls back to support zone + M15 reversal."""
+def _pullback_buy(df_h4, df_h1, df_m15, df_m5, ask: float) -> tuple:
+    """H4 uptrend + H1 pulls back to support zone + M15 setup + M5 precise entry."""
     h4_bias, h4_info = _h4_structure(df_h4)
     if h4_bias != "UPTREND":
         return "NO TRADE", {**h4_info, "reason": f"H4 not uptrend ({h4_bias})"}
@@ -256,22 +298,27 @@ def _pullback_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
         return "NO TRADE", {**h4_info, **zone_info, **m15_info,
                             "reason": "No M15 buy confirmation"}
 
+    m5_ok, m5_info = _m5_entry_timing(df_m5, "BUY") if df_m5 is not None else (True, {})
+    if not m5_ok:
+        return "NO TRADE", {**h4_info, **zone_info, **m15_info, **m5_info,
+                            "reason": f"No M5 entry timing (signals={m5_info.get('m5_signals', [])})"}
+
     sl, tp, rr = _sl_tp_rr(df_m15, df_h1, "BUY", ask)
     if rr < 1.5:
-        return "NO TRADE", {**h4_info, **zone_info, **m15_info,
+        return "NO TRADE", {**h4_info, **zone_info, **m15_info, **m5_info,
                             "sl": sl, "tp": tp, "rr": rr,
                             "reason": f"R:R too low ({rr} < 1.5)"}
 
     return "BUY", {
-        **h4_info, **zone_info, **m15_info,
+        **h4_info, **zone_info, **m15_info, **m5_info,
         "entry_type": "PULLBACK",
         "sl": sl, "tp": tp, "rr": rr,
-        "reason": f"H4 uptrend + zone ({zone_info['confluence']}) + M15 {sig_type} | R:R {rr}",
+        "reason": f"H4 uptrend + zone ({zone_info['confluence']}) + M15 {sig_type} + M5 | R:R {rr}",
     }
 
 
-def _pullback_sell(df_h4, df_h1, df_m15, bid: float) -> tuple:
-    """H4 downtrend + H1 pulls back to resistance zone + M15 reversal."""
+def _pullback_sell(df_h4, df_h1, df_m15, df_m5, bid: float) -> tuple:
+    """H4 downtrend + H1 pulls back to resistance zone + M15 setup + M5 precise entry."""
     h4_bias, h4_info = _h4_structure(df_h4)
     if h4_bias != "DOWNTREND":
         return "NO TRADE", {**h4_info, "reason": f"H4 not downtrend ({h4_bias})"}
@@ -286,23 +333,28 @@ def _pullback_sell(df_h4, df_h1, df_m15, bid: float) -> tuple:
         return "NO TRADE", {**h4_info, **zone_info, **m15_info,
                             "reason": "No M15 sell confirmation"}
 
+    m5_ok, m5_info = _m5_entry_timing(df_m5, "SELL") if df_m5 is not None else (True, {})
+    if not m5_ok:
+        return "NO TRADE", {**h4_info, **zone_info, **m15_info, **m5_info,
+                            "reason": f"No M5 entry timing (signals={m5_info.get('m5_signals', [])})"}
+
     sl, tp, rr = _sl_tp_rr(df_m15, df_h1, "SELL", bid)
     if rr < 1.5:
-        return "NO TRADE", {**h4_info, **zone_info, **m15_info,
+        return "NO TRADE", {**h4_info, **zone_info, **m15_info, **m5_info,
                             "sl": sl, "tp": tp, "rr": rr,
                             "reason": f"R:R too low ({rr} < 1.5)"}
 
     return "SELL", {
-        **h4_info, **zone_info, **m15_info,
+        **h4_info, **zone_info, **m15_info, **m5_info,
         "entry_type": "PULLBACK_SELL",
         "sl": sl, "tp": tp, "rr": rr,
-        "reason": f"H4 downtrend + zone ({zone_info['confluence']}) + M15 {sig_type} | R:R {rr}",
+        "reason": f"H4 downtrend + zone ({zone_info['confluence']}) + M15 {sig_type} + M5 | R:R {rr}",
     }
 
 
-def _breakout_retest_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
+def _breakout_retest_buy(df_h4, df_h1, df_m15, df_m5, ask: float) -> tuple:
     """
-    H4/H1 breaks resistance → price retests old resistance (now support) → M15 confirms.
+    H4/H1 breaks resistance → price retests old resistance (now support) → M15 + M5 confirm.
     Detected by: price is just above a known H1 resistance level (within 0.5%).
     """
     h4_bias, h4_info = _h4_structure(df_h4)
@@ -321,23 +373,28 @@ def _breakout_retest_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
         return "NO TRADE", {**h4_info, **m15_info,
                             "reason": "No M15 confirmation on retest"}
 
+    m5_ok, m5_info = _m5_entry_timing(df_m5, "BUY") if df_m5 is not None else (True, {})
+    if not m5_ok:
+        return "NO TRADE", {**h4_info, **m15_info, **m5_info,
+                            "reason": f"No M5 entry timing on retest (signals={m5_info.get('m5_signals', [])})"}
+
     sl, tp, rr = _sl_tp_rr(df_m15, df_h1, "BUY", ask)
     if rr < 1.5:
-        return "NO TRADE", {**h4_info, **m15_info,
+        return "NO TRADE", {**h4_info, **m15_info, **m5_info,
                             "sl": sl, "tp": tp, "rr": rr,
                             "reason": f"R:R too low ({rr} < 1.5)"}
 
     return "BUY", {
-        **h4_info, **m15_info,
+        **h4_info, **m15_info, **m5_info,
         "entry_type":   "BREAKOUT_RETEST",
         "retest_zone":  retest_zones[-1],
         "sl": sl, "tp": tp, "rr": rr,
-        "reason": f"Breakout retest at {retest_zones[-1]} + M15 {sig_type} | R:R {rr}",
+        "reason": f"Breakout retest at {retest_zones[-1]} + M15 {sig_type} + M5 | R:R {rr}",
     }
 
 
-def _range_support_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
-    """H4 sideways + price at range support + M15 reversal."""
+def _range_support_buy(df_h4, df_h1, df_m15, df_m5, ask: float) -> tuple:
+    """H4 sideways + price at range support + M15 setup + M5 precise entry."""
     h4_bias, h4_info = _h4_structure(df_h4)
     if h4_bias != "SIDEWAYS":
         return "NO TRADE", {**h4_info, "reason": f"H4 not sideways ({h4_bias})"}
@@ -351,34 +408,42 @@ def _range_support_buy(df_h4, df_h1, df_m15, ask: float) -> tuple:
         return "NO TRADE", {**h4_info, **m15_info,
                             "reason": "No M15 reversal at range support"}
 
+    m5_ok, m5_info = _m5_entry_timing(df_m5, "BUY") if df_m5 is not None else (True, {})
+    if not m5_ok:
+        return "NO TRADE", {**h4_info, **m15_info, **m5_info,
+                            "reason": f"No M5 entry timing at range support (signals={m5_info.get('m5_signals', [])})"}
+
     sl, tp, rr = _sl_tp_rr(df_m15, df_h1, "BUY", ask)
     if rr < 1.5:
-        return "NO TRADE", {**h4_info, **m15_info,
+        return "NO TRADE", {**h4_info, **m15_info, **m5_info,
                             "sl": sl, "tp": tp, "rr": rr,
                             "reason": f"R:R too low ({rr} < 1.5)"}
 
     return "BUY", {
-        **h4_info, **m15_info,
+        **h4_info, **m15_info, **m5_info,
         "entry_type": "RANGE_SUPPORT",
         "sl": sl, "tp": tp, "rr": rr,
-        "reason": f"Range support + M15 {sig_type} | R:R {rr}",
+        "reason": f"Range support + M15 {sig_type} + M5 | R:R {rr}",
     }
 
 
 # ── Main Signal Generator ─────────────────────────────────────
 
-def generate_signal(df_h4, df_h1=None, df_m15=None, cfg=None, ask=0.0, bid=0.0):
+def generate_signal(df_h4, df_h1=None, df_m15=None, df_m5=None, cfg=None, ask=0.0, bid=0.0):
     """
-    Input:  df_h4, df_h1, df_m15 DataFrames + current ask/bid prices
+    Input:  df_h4, df_h1, df_m15, df_m5 DataFrames + current ask/bid prices
     Output: ("BUY" | "SELL" | "NO TRADE", info_dict)
 
-    info_dict for BUY/SELL includes: sl, tp, rr, entry_type, reason, confluence
+    info_dict for BUY/SELL includes: sl, tp, rr, entry_type, reason, confluence,
+      m15_signals, m5_signals
 
     Priority order:
       1. Pullback Buy  (H4 uptrend — highest win rate)
       2. Pullback Sell (H4 downtrend)
       3. Breakout Retest Buy
       4. Range Support Buy
+
+    df_m5 is optional — if None, M5 layer is skipped (graceful degradation).
     """
     cfg = cfg or {}
 
@@ -387,6 +452,9 @@ def generate_signal(df_h4, df_h1=None, df_m15=None, cfg=None, ask=0.0, bid=0.0):
 
     if len(df_h4) < 50 or len(df_h1) < 50 or len(df_m15) < 20:
         return "NO TRADE", {"reason": "Insufficient candle data"}
+
+    if df_m5 is not None and len(df_m5) < 15:
+        df_m5 = None  # too few bars — skip M5 rather than error
 
     min_vol = cfg.get("min_volatility", 0.3)
     max_vol = cfg.get("max_volatility", 8.0)
@@ -400,22 +468,22 @@ def generate_signal(df_h4, df_h1=None, df_m15=None, cfg=None, ask=0.0, bid=0.0):
     base = {"atr_m15": atr_val}
 
     # 1. Pullback Buy — best setup when H4 is clearly bullish
-    sig, info = _pullback_buy(df_h4, df_h1, df_m15, ask)
+    sig, info = _pullback_buy(df_h4, df_h1, df_m15, df_m5, ask)
     if sig == "BUY":
         return "BUY", {**base, **info}
 
     # 2. Pullback Sell — H4 clearly bearish
-    sig, info = _pullback_sell(df_h4, df_h1, df_m15, bid)
+    sig, info = _pullback_sell(df_h4, df_h1, df_m15, df_m5, bid)
     if sig == "SELL":
         return "SELL", {**base, **info}
 
     # 3. Breakout + Retest Buy
-    sig, info = _breakout_retest_buy(df_h4, df_h1, df_m15, ask)
+    sig, info = _breakout_retest_buy(df_h4, df_h1, df_m15, df_m5, ask)
     if sig == "BUY":
         return "BUY", {**base, **info}
 
     # 4. Range Support Buy
-    sig, info = _range_support_buy(df_h4, df_h1, df_m15, ask)
+    sig, info = _range_support_buy(df_h4, df_h1, df_m15, df_m5, ask)
     if sig == "BUY":
         return "BUY", {**base, **info}
 

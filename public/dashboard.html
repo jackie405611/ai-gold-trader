@@ -102,7 +102,7 @@
         <table id="sig-table">
           <thead><tr>
             <th>Time</th><th>Symbol</th><th>Signal</th><th>Entry Type</th>
-            <th>H4</th><th>Confluence</th><th>R:R</th><th>Outcome</th>
+            <th>H4</th><th>Confluence</th><th>M15</th><th>M5</th><th>R:R</th><th>Outcome</th>
           </tr></thead>
           <tbody id="sig-body"><tr><td colspan="8" style="color:var(--muted);padding:20px">Loading…</td></tr></tbody>
         </table>
@@ -215,6 +215,8 @@ async function load() {
         <td>${s.entry_type || '—'}</td>
         <td><small>${s.h4_structure || '—'}</small></td>
         <td><small style="color:var(--muted)">${(s.confluence||[]).slice(0,2).join(', ') || '—'}</small></td>
+        <td><small style="color:var(--muted)">${(s.m15_signals||[]).filter(x=>x!=='rsi_ok').join(', ') || '—'}</small></td>
+        <td><small style="color:var(--muted)">${(s.m5_signals||[]).filter(x=>!x.includes('rsi')).join(', ') || '—'}</small></td>
         <td>${s.rr != null ? s.rr.toFixed(1) : '—'}</td>
         <td>${outcomeBadge(s.sim_outcome)}</td>
       </tr>`).join('');
