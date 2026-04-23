@@ -1,31 +1,15 @@
 # ============================================================
-#  ai_m1.py  —  M1 Entry Engine  (V3)
+#  lib/ai_m1.py  —  M1 Entry Engine (V3)
 #  RSI_OVERSOLD / RSI_OVERBOUGHT รับจาก cfg ของแต่ละ symbol
 # ============================================================
-import pandas as pd
-
-
-def _rsi(series, period=14):
-    delta    = series.diff()
-    gain     = delta.clip(lower=0)
-    loss     = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
-    avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
-    rs       = avg_gain / avg_loss.replace(0, 1e-10)
-    return 100 - (100 / (1 + rs))
-
-
-def _ema(series, span):
-    return series.ewm(span=span, adjust=False).mean()
+from lib.indicators import rsi as calc_rsi, ema as calc_ema, atr as calc_atr
 
 
 def _is_bullish_candle(df, idx=-1):
-    """Candle ปิดสูงกว่าเปิด (bullish body)"""
     return df["close"].iloc[idx] > df["open"].iloc[idx]
 
 
 def _is_bearish_candle(df, idx=-1):
-    """Candle ปิดต่ำกว่าเปิด (bearish body)"""
     return df["close"].iloc[idx] < df["open"].iloc[idx]
 
 
@@ -36,23 +20,15 @@ def entry_signal(df, m5_trend="NONE", cfg=None):
     """
     oversold   = (cfg or {}).get("rsi_oversold",  38)
     overbought = (cfg or {}).get("rsi_overbought", 62)
-    close  = df["close"]
-    rsi    = _rsi(close)
-    ema20  = _ema(close, 20)
 
-    last_rsi   = rsi.iloc[-1]
+    close = df["close"]
+    rsi_s  = calc_rsi(close)
+    ema20  = calc_ema(close, 20)
+    atr_v  = calc_atr(df).iloc[-1]
+
+    last_rsi   = rsi_s.iloc[-1]
     last_close = close.iloc[-1]
     last_ema20 = ema20.iloc[-1]
-
-    # ATR สำหรับ SL/TP
-    high  = df["high"]
-    low   = df["low"]
-    tr    = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low  - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    atr   = tr.ewm(span=14, adjust=False).mean().iloc[-1]
 
     signal = "NONE"
 
@@ -75,4 +51,4 @@ def entry_signal(df, m5_trend="NONE", cfg=None):
         elif last_rsi > overbought + 5:
             signal = "SELL"
 
-    return signal, round(last_rsi, 2), round(atr, 4)
+    return signal, round(last_rsi, 2), round(atr_v, 4)
