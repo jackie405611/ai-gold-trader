@@ -40,15 +40,16 @@ def _compute_stats(signals: list) -> dict:
         else:
             by_entry[et]["open"]   += 1
 
-    # Breakdown by H4 structure
-    by_h4: dict = defaultdict(lambda: {"total": 0, "wins": 0, "losses": 0})
+    # Breakdown by H1 intraday trend structure
+    by_h1: dict = defaultdict(lambda: {"total": 0, "wins": 0, "losses": 0})
     for s in trades:
-        h4 = s.get("h4_structure") or "UNKNOWN"
-        by_h4[h4]["total"] += 1
+        # support both old (h4_structure) and new (h1_structure) signal records
+        h1 = s.get("h1_structure") or s.get("h4_structure") or "UNKNOWN"
+        by_h1[h1]["total"] += 1
         if s.get("sim_outcome") == "TP":
-            by_h4[h4]["wins"]   += 1
+            by_h1[h1]["wins"]   += 1
         elif s.get("sim_outcome") == "SL":
-            by_h4[h4]["losses"] += 1
+            by_h1[h1]["losses"] += 1
 
     return {
         "total":          total,
@@ -61,8 +62,8 @@ def _compute_stats(signals: list) -> dict:
         "sim_open":       sim_open,
         "win_rate_pct":   win_rate,
         "avg_rr":         avg_rr,
-        "by_entry_type":  dict(by_entry),
-        "by_h4_structure":dict(by_h4),
+        "by_entry_type":   dict(by_entry),
+        "by_h1_structure": dict(by_h1),
     }
 
 

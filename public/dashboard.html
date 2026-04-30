@@ -102,7 +102,7 @@
         <table id="sig-table">
           <thead><tr>
             <th>Time</th><th>Symbol</th><th>Signal</th><th>Entry Type</th>
-            <th>H4</th><th>Confluence</th><th>M15</th><th>M5</th><th>R:R</th><th>Outcome</th>
+            <th>H1 Trend</th><th>Confluence</th><th>M5 Setup</th><th>M1 Entry</th><th>R:R</th><th>Outcome</th>
           </tr></thead>
           <tbody id="sig-body"><tr><td colspan="8" style="color:var(--muted);padding:20px">Loading…</td></tr></tbody>
         </table>
@@ -115,7 +115,7 @@
         <div id="entry-chart" class="mini-table"></div>
       </div>
       <div class="panel">
-        <div class="panel-title">BY H4 STRUCTURE</div>
+        <div class="panel-title">BY H1 TREND</div>
         <div id="h4-chart" class="mini-table"></div>
       </div>
     </div>
@@ -213,10 +213,10 @@ async function load() {
         <td>${s.symbol || '—'}</td>
         <td>${signalBadge(s.signal)}</td>
         <td>${s.entry_type || '—'}</td>
-        <td><small>${s.h4_structure || '—'}</small></td>
+        <td><small>${s.h1_structure || s.h4_structure || '—'}</small></td>
         <td><small style="color:var(--muted)">${(s.confluence||[]).slice(0,2).join(', ') || '—'}</small></td>
-        <td><small style="color:var(--muted)">${(s.m15_signals||[]).filter(x=>x!=='rsi_ok').join(', ') || '—'}</small></td>
-        <td><small style="color:var(--muted)">${(s.m5_signals||[]).filter(x=>!x.includes('rsi')).join(', ') || '—'}</small></td>
+        <td><small style="color:var(--muted)">${(s.m5_signals||[]).filter(x=>x!=='rsi_ok').join(', ') || '—'}</small></td>
+        <td><small style="color:var(--muted)">${(s.m1_signals||[]).filter(x=>!x.includes('rsi')).join(', ') || '—'}</small></td>
         <td>${s.rr != null ? s.rr.toFixed(1) : '—'}</td>
         <td>${outcomeBadge(s.sim_outcome)}</td>
       </tr>`).join('');
@@ -224,7 +224,7 @@ async function load() {
 
     // Mini charts
     miniChart('entry-chart', stats.by_entry_type);
-    miniChart('h4-chart', stats.by_h4_structure);
+    miniChart('h4-chart', stats.by_h1_structure);
 
     document.getElementById('last-refresh').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
