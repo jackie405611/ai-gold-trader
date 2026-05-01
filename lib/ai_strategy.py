@@ -23,7 +23,7 @@ try:
         price_near_zone, nearest_resistance_above, nearest_support_below,
         is_pin_bar_bullish, is_pin_bar_bearish,
         is_bullish_engulfing, is_bearish_engulfing,
-        is_morning_star,
+        is_morning_star, is_evening_star,
         break_of_structure_bullish, break_of_structure_bearish,
         swing_lows, swing_highs,
     )
@@ -35,7 +35,7 @@ except ImportError:
         price_near_zone, nearest_resistance_above, nearest_support_below,
         is_pin_bar_bullish, is_pin_bar_bearish,
         is_bullish_engulfing, is_bearish_engulfing,
-        is_morning_star,
+        is_morning_star, is_evening_star,
         break_of_structure_bullish, break_of_structure_bearish,
         swing_lows, swing_highs,
     )
@@ -109,18 +109,18 @@ def _m15_in_zone(df_h1, df_m15, price: float, direction: str) -> tuple:
     """
     confluence = []
 
-    # M15 primary intraday zones
-    m15_supports    = find_support_zones(df_m15, n=6, lookback=80)
-    m15_resistances = find_resistance_zones(df_m15, n=6, lookback=80)
+    # M15 primary intraday zones (left=2,right=1 → faster zone detection on 15m bars)
+    m15_supports    = find_support_zones(df_m15, n=6, lookback=80, left=2, right=1)
+    m15_resistances = find_resistance_zones(df_m15, n=6, lookback=80, left=2, right=1)
 
     if direction == "BUY" and price_near_zone(price, m15_supports, tolerance_pct=0.003):
         confluence.append("M15 support")
     if direction == "SELL" and price_near_zone(price, m15_resistances, tolerance_pct=0.003):
         confluence.append("M15 resistance")
 
-    # H1 higher-timeframe context zones
-    h1_supports    = find_support_zones(df_h1, n=4, lookback=60)
-    h1_resistances = find_resistance_zones(df_h1, n=4, lookback=60)
+    # H1 higher-timeframe context zones (left=3,right=2 → standard H1 confirmation)
+    h1_supports    = find_support_zones(df_h1, n=4, lookback=60, left=3, right=2)
+    h1_resistances = find_resistance_zones(df_h1, n=4, lookback=60, left=3, right=2)
 
     if direction == "BUY" and price_near_zone(price, h1_supports, tolerance_pct=0.004):
         confluence.append("H1 support")
@@ -180,16 +180,18 @@ def _m5_setup(df_m5, direction: str) -> tuple:
             signals.append("pin_bar")
         if is_bullish_engulfing(df_m5):
             signals.append("engulfing")
-        if is_morning_star(df_m5):
+        if is_morning_star(df_m5, small_body_ratio=0.5):   # permissive for M5
             signals.append("morning_star")
-        if break_of_structure_bullish(df_m5, lookback=20):
+        if break_of_structure_bullish(df_m5, lookback=20, left=2, right=2):
             signals.append("bos")
     else:
         if is_pin_bar_bearish(df_m5):
             signals.append("pin_bar_bear")
         if is_bearish_engulfing(df_m5):
             signals.append("engulfing_bear")
-        if break_of_structure_bearish(df_m5, lookback=20):
+        if is_evening_star(df_m5, small_body_ratio=0.5):   # M5 bearish 3-candle
+            signals.append("evening_star")
+        if break_of_structure_bearish(df_m5, lookback=20, left=2, right=2):
             signals.append("bos_bear")
 
     rsi_val = float(rsi(df_m5["close"]).iloc[-1])
@@ -223,7 +225,8 @@ def _m1_entry_timing(df_m1, direction: str) -> tuple:
             signals.append("m1_pin_bar")
         if is_bullish_engulfing(df_m1):
             signals.append("m1_engulfing")
-        if break_of_structure_bullish(df_m1, lookback=15):
+        # M1 BOS: left=2,right=1 — only 3 bars needed to confirm a micro swing
+        if break_of_structure_bullish(df_m1, lookback=15, left=2, right=1):
             signals.append("m1_bos")
         if rsi_val < 35:
             signals.append("m1_rsi_ok")
@@ -232,7 +235,7 @@ def _m1_entry_timing(df_m1, direction: str) -> tuple:
             signals.append("m1_pin_bar_bear")
         if is_bearish_engulfing(df_m1):
             signals.append("m1_engulfing_bear")
-        if break_of_structure_bearish(df_m1, lookback=15):
+        if break_of_structure_bearish(df_m1, lookback=15, left=2, right=1):
             signals.append("m1_bos_bear")
         if rsi_val > 65:
             signals.append("m1_rsi_ok")
@@ -259,7 +262,8 @@ def _sl_tp_rr(df_m5, df_m15, direction: str, entry: float) -> tuple:
     sub_m5  = df_m5.tail(30).copy()
 
     if direction == "BUY":
-        sl_mask   = swing_lows(sub_m5, left=3, right=2)
+        # M5 swing low for SL: left=2,right=1 finds recent lows faster on 5m bars
+        sl_mask   = swing_lows(sub_m5, left=2, right=1)
         sl_prices = sub_m5["low"][sl_mask].values
         if len(sl_prices) >= 1:
             sl = round(float(sl_prices[-1]) - atr_val * 0.3, 4)
@@ -267,12 +271,14 @@ def _sl_tp_rr(df_m5, df_m15, direction: str, entry: float) -> tuple:
             sl = round(entry - atr_val * 1.2, 4)
         sl = min(sl, round(entry - atr_val * 0.8, 4))
 
-        m15_res   = find_resistance_zones(df_m15, n=6, lookback=80)
+        # M15 resistance for TP: left=2,right=1 consistent with zone detection
+        m15_res   = find_resistance_zones(df_m15, n=6, lookback=80, left=2, right=1)
         tp_target = nearest_resistance_above(entry, m15_res)
         tp = round(tp_target if tp_target else entry + atr_val * 2.0, 4)
 
     else:
-        sh_mask   = swing_highs(sub_m5, left=3, right=2)
+        # M5 swing high for SL
+        sh_mask   = swing_highs(sub_m5, left=2, right=1)
         sh_prices = sub_m5["high"][sh_mask].values
         if len(sh_prices) >= 1:
             sl = round(float(sh_prices[-1]) + atr_val * 0.3, 4)
@@ -280,7 +286,8 @@ def _sl_tp_rr(df_m5, df_m15, direction: str, entry: float) -> tuple:
             sl = round(entry + atr_val * 1.2, 4)
         sl = max(sl, round(entry + atr_val * 0.8, 4))
 
-        m15_sup   = find_support_zones(df_m15, n=6, lookback=80)
+        # M15 support for TP
+        m15_sup   = find_support_zones(df_m15, n=6, lookback=80, left=2, right=1)
         tp_target = nearest_support_below(entry, m15_sup)
         tp = round(tp_target if tp_target else entry - atr_val * 2.0, 4)
 
@@ -381,7 +388,8 @@ def _breakout_retest_buy(df_h4, df_h1, df_m15, df_m5, df_m1, ask: float) -> tupl
     if h1_bias not in ("UPTREND", "SIDEWAYS"):
         return "NO TRADE", {**h1_info, "reason": "H1 not suitable for breakout buy"}
 
-    h1_res = find_resistance_zones(df_h1, n=6, lookback=60)
+    # H1 resistance zones: left=3,right=2 — standard H1 swing confirmation
+    h1_res = find_resistance_zones(df_h1, n=6, lookback=60, left=3, right=2)
     retest_zones = [z for z in h1_res if ask > z and abs(ask - z) / z <= 0.004]
 
     if not retest_zones:

@@ -132,19 +132,21 @@ def find_fib_zone(price: float, fib_levels: dict, tolerance_pct: float = 0.003) 
 
 # ── Support / Resistance Zones ────────────────────────────────
 
-def find_support_zones(df: pd.DataFrame, n: int = 5, lookback: int = 60) -> list:
-    """Recent support levels from swing lows."""
-    sub    = df.tail(lookback).copy()
-    sl_mask = swing_lows(sub, left=3, right=2)
-    levels = sorted(sub["low"][sl_mask].values)
+def find_support_zones(df: pd.DataFrame, n: int = 5, lookback: int = 60,
+                       left: int = 3, right: int = 2) -> list:
+    """Recent support levels from swing lows. left/right tune sensitivity per TF."""
+    sub     = df.tail(lookback).copy()
+    sl_mask = swing_lows(sub, left=left, right=right)
+    levels  = sorted(sub["low"][sl_mask].values)
     return [round(float(v), 4) for v in levels[-n:]]
 
 
-def find_resistance_zones(df: pd.DataFrame, n: int = 5, lookback: int = 60) -> list:
-    """Recent resistance levels from swing highs."""
-    sub    = df.tail(lookback).copy()
-    sh_mask = swing_highs(sub, left=3, right=2)
-    levels = sorted(sub["high"][sh_mask].values)
+def find_resistance_zones(df: pd.DataFrame, n: int = 5, lookback: int = 60,
+                          left: int = 3, right: int = 2) -> list:
+    """Recent resistance levels from swing highs. left/right tune sensitivity per TF."""
+    sub     = df.tail(lookback).copy()
+    sh_mask = swing_highs(sub, left=left, right=right)
+    levels  = sorted(sub["high"][sh_mask].values)
     return [round(float(v), 4) for v in levels[-n:]]
 
 
@@ -170,10 +172,11 @@ def nearest_support_below(price: float, zones: list) -> float | None:
 
 # ── Price Action Patterns ─────────────────────────────────────
 
-def is_pin_bar_bullish(df: pd.DataFrame, idx: int = -1, min_tail_ratio: float = 2.0) -> bool:
+def is_pin_bar_bullish(df: pd.DataFrame, idx: int = -1,
+                       min_tail_ratio: float = 2.0, min_wick_pct: float = 0.0005) -> bool:
     """
     Bullish pin bar (hammer): long lower wick >= min_tail_ratio × body,
-    lower wick > upper wick.
+    lower wick > upper wick, wick >= min_wick_pct of price (filters M1 noise).
     """
     o = float(df["open"].iloc[idx])
     h = float(df["high"].iloc[idx])
@@ -183,16 +186,20 @@ def is_pin_bar_bullish(df: pd.DataFrame, idx: int = -1, min_tail_ratio: float = 
     body       = abs(c - o)
     lower_wick = min(o, c) - l
     upper_wick = h - max(o, c)
+    price_ref  = (h + l) / 2 or 1.0
 
     if body < 1e-10:
+        return False
+    if lower_wick / price_ref < min_wick_pct:
         return False
     return lower_wick >= min_tail_ratio * body and lower_wick > upper_wick
 
 
-def is_pin_bar_bearish(df: pd.DataFrame, idx: int = -1, min_tail_ratio: float = 2.0) -> bool:
+def is_pin_bar_bearish(df: pd.DataFrame, idx: int = -1,
+                       min_tail_ratio: float = 2.0, min_wick_pct: float = 0.0005) -> bool:
     """
     Bearish pin bar (shooting star): long upper wick >= min_tail_ratio × body,
-    upper wick > lower wick.
+    upper wick > lower wick, wick >= min_wick_pct of price (filters M1 noise).
     """
     o = float(df["open"].iloc[idx])
     h = float(df["high"].iloc[idx])
@@ -202,46 +209,58 @@ def is_pin_bar_bearish(df: pd.DataFrame, idx: int = -1, min_tail_ratio: float = 
     body       = abs(c - o)
     upper_wick = h - max(o, c)
     lower_wick = min(o, c) - l
+    price_ref  = (h + l) / 2 or 1.0
 
     if body < 1e-10:
+        return False
+    if upper_wick / price_ref < min_wick_pct:
         return False
     return upper_wick >= min_tail_ratio * body and upper_wick > lower_wick
 
 
 def is_bullish_engulfing(df: pd.DataFrame, idx: int = -1) -> bool:
-    """Current bullish body fully engulfs previous bearish body."""
+    """
+    Current bullish body fully engulfs previous bearish body.
+    Current body must also be larger than previous body (momentum filter).
+    """
     if len(df) < 2:
         return False
     prev = idx - 1
     o1, c1 = float(df["open"].iloc[prev]), float(df["close"].iloc[prev])
     o2, c2 = float(df["open"].iloc[idx]),  float(df["close"].iloc[idx])
 
-    prev_bearish = c1 < o1
-    curr_bullish = c2 > o2
-    engulfs      = c2 > o1 and o2 < c1
+    prev_bearish  = c1 < o1
+    curr_bullish  = c2 > o2
+    engulfs       = c2 > o1 and o2 < c1
+    body_growing  = abs(c2 - o2) > abs(c1 - o1)
 
-    return prev_bearish and curr_bullish and engulfs
+    return prev_bearish and curr_bullish and engulfs and body_growing
 
 
 def is_bearish_engulfing(df: pd.DataFrame, idx: int = -1) -> bool:
-    """Current bearish body fully engulfs previous bullish body."""
+    """
+    Current bearish body fully engulfs previous bullish body.
+    Current body must also be larger than previous body (momentum filter).
+    """
     if len(df) < 2:
         return False
     prev = idx - 1
     o1, c1 = float(df["open"].iloc[prev]), float(df["close"].iloc[prev])
     o2, c2 = float(df["open"].iloc[idx]),  float(df["close"].iloc[idx])
 
-    prev_bullish = c1 > o1
-    curr_bearish = c2 < o2
-    engulfs      = c2 < o1 and o2 > c1
+    prev_bullish  = c1 > o1
+    curr_bearish  = c2 < o2
+    engulfs       = c2 < o1 and o2 > c1
+    body_growing  = abs(c2 - o2) > abs(c1 - o1)
 
-    return prev_bullish and curr_bearish and engulfs
+    return prev_bullish and curr_bearish and engulfs and body_growing
 
 
-def is_morning_star(df: pd.DataFrame) -> bool:
+def is_morning_star(df: pd.DataFrame, small_body_ratio: float = 0.35) -> bool:
     """
     3-candle bullish reversal:
-    Candle 1 = bearish  |  Candle 2 = small body  |  Candle 3 = bullish above midpoint of C1.
+    C1 = bearish | C2 = small indecision body | C3 = bullish, closes above C1 midpoint.
+    small_body_ratio: C2 body must be < ratio × C1 body (0.35 strict, 0.5 permissive for M5).
     """
     if len(df) < 3:
         return False
@@ -249,43 +268,66 @@ def is_morning_star(df: pd.DataFrame) -> bool:
     o2, c2 = float(df["open"].iloc[-2]), float(df["close"].iloc[-2])
     o3, c3 = float(df["open"].iloc[-1]), float(df["close"].iloc[-1])
 
-    c1_bearish  = c1 < o1
-    c1_body     = abs(c1 - o1)
-    c2_small    = abs(c2 - o2) < c1_body * 0.35
-    c3_bullish  = c3 > o3
+    c1_bearish   = c1 < o1
+    c1_body      = abs(c1 - o1)
+    c2_small     = abs(c2 - o2) < c1_body * small_body_ratio
+    c3_bullish   = c3 > o3
     c3_above_mid = c3 > (o1 + c1) / 2
 
     return c1_bearish and c2_small and c3_bullish and c3_above_mid
 
 
+def is_evening_star(df: pd.DataFrame, small_body_ratio: float = 0.35) -> bool:
+    """
+    3-candle bearish reversal (mirror of morning star):
+    C1 = bullish | C2 = small indecision body | C3 = bearish, closes below C1 midpoint.
+    """
+    if len(df) < 3:
+        return False
+    o1, c1 = float(df["open"].iloc[-3]), float(df["close"].iloc[-3])
+    o2, c2 = float(df["open"].iloc[-2]), float(df["close"].iloc[-2])
+    o3, c3 = float(df["open"].iloc[-1]), float(df["close"].iloc[-1])
+
+    c1_bullish   = c1 > o1
+    c1_body      = abs(c1 - o1)
+    c2_small     = abs(c2 - o2) < c1_body * small_body_ratio
+    c3_bearish   = c3 < o3
+    c3_below_mid = c3 < (o1 + c1) / 2
+
+    return c1_bullish and c2_small and c3_bearish and c3_below_mid
+
+
 # ── Break of Structure ────────────────────────────────────────
 
-def break_of_structure_bullish(df: pd.DataFrame, lookback: int = 20) -> bool:
+def break_of_structure_bullish(df: pd.DataFrame, lookback: int = 20,
+                               left: int = 3, right: int = 2) -> bool:
     """
-    BOS Bullish: latest close breaks above the most recent confirmed swing high
-    within the lookback window (signals downtrend is ending / uptrend starting).
+    BOS Bullish: latest close breaks above the most recent confirmed swing high.
+    left/right: swing sensitivity — use smaller values for faster TFs (M5: 2/2, M1: 2/1).
     """
-    if len(df) < lookback + 5:
+    min_bars = lookback + left + right
+    if len(df) < min_bars:
         return False
-    sub     = df.iloc[-(lookback + 5): -1].copy()  # exclude very last bar
-    sh_mask = swing_highs(sub, left=3, right=2)
+    sub       = df.iloc[-(lookback + left + right): -1].copy()
+    sh_mask   = swing_highs(sub, left=left, right=right)
     sh_prices = sub["high"][sh_mask].values
     if len(sh_prices) < 1:
         return False
-    last_sh = sh_prices[-1]
-    return float(df["close"].iloc[-1]) > last_sh
+    return float(df["close"].iloc[-1]) > sh_prices[-1]
 
 
-def break_of_structure_bearish(df: pd.DataFrame, lookback: int = 20) -> bool:
+def break_of_structure_bearish(df: pd.DataFrame, lookback: int = 20,
+                                left: int = 3, right: int = 2) -> bool:
     """
     BOS Bearish: latest close breaks below the most recent confirmed swing low.
+    left/right: swing sensitivity — use smaller values for faster TFs (M5: 2/2, M1: 2/1).
     """
-    if len(df) < lookback + 5:
+    min_bars = lookback + left + right
+    if len(df) < min_bars:
         return False
-    sub     = df.iloc[-(lookback + 5): -1].copy()
-    sl_mask = swing_lows(sub, left=3, right=2)
+    sub       = df.iloc[-(lookback + left + right): -1].copy()
+    sl_mask   = swing_lows(sub, left=left, right=right)
     sl_prices = sub["low"][sl_mask].values
     if len(sl_prices) < 1:
         return False
-    last_sl = sl_prices[-1]
-    return float(df["close"].iloc[-1]) < last_sl
+    return float(df["close"].iloc[-1]) < sl_prices[-1]
